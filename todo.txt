@@ -1,0 +1,1 @@
+采用Flutter + Codemagic的方案，在当前Ubuntu环境下实现一个支持iOS15.5系统的相册清理App。

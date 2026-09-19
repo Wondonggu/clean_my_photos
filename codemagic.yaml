@@ -1,0 +1,176 @@
+# Codemagic 构建配置。
+#
+# 为什么需要它：iOS 只能在一台装了 Xcode 的 macOS 上编译，而本机是 Ubuntu。
+# 这里把「代码检查 → 编译 → 签名 → 上传 TestFlight」整条链路放到 Codemagic 的
+# macOS 构建机上，本地只负责写代码和跑不依赖平台的测试。
+#
+# 两个工作流：
+#   ios-unsigned-check —— 不需要任何 Apple 账号，推代码就能验证 iOS 15.5 配置没坏；
+#   ios-release        —— 需要先配好签名，产出可直接上 TestFlight 的 ipa。
+#
+# 使用前请在 Codemagic 团队设置里完成两项配置（详见 README「在 Codemagic 上构建 iOS」）：
+#   1. Developer Portal → App Store Connect API key，键名填到下面 integrations 里；
+#   2. codemagic.yaml settings → Code signing identities 里放好 iOS 发布证书。
+
+workflows:
+  # ------------------------------------------------------------------
+  # 不需要签名的编译检查：任何一次推送都能跑，用来保证 iOS 工程配置
+  # （尤其是 15.5 的部署目标）没有被改坏。
+  # ------------------------------------------------------------------
+  ios-unsigned-check:
+    name: iOS 编译检查（无需签名）
+    instance_type: mac_mini_m2
+    max_build_duration: 45
+    environment:
+      # Flutter 3.47 起最低支持 iOS 15，正好与本项目的部署目标一致；
+      # 想跟随最新稳定版可以改成 `stable`。
+      flutter: 3.47.2
+      xcode: 26.6
+      cocoapods: default
+      vars:
+        # 目标部署版本。改这里的同时要改 ios/Runner.xcodeproj 和
+        # ios/Flutter/AppFrameworkInfo.plist，脚本末尾会做一致性检查。
+        EXPECTED_IOS_TARGET: "15.5"
+    triggering:
+      events:
+        - push
+        - pull_request
+        - tag
+      branch_patterns:
+        - pattern: "*"
+          include: true
+    scripts:
+      - name: 读取依赖
+        script: flutter pub get
+
+      - name: 静态检查
+        script: flutter analyze
+
+      - name: 单元测试与界面测试
+        script: flutter test
+
+      - name: 安装 CocoaPods 依赖
+        script: |
+          find . -name "Podfile" -maxdepth 2 -execdir pod install \;
+
+      - name: 编译 iOS（不签名）
+        script: |
+          flutter build ios --release --no-codesign
+
+      - name: 校验产物的最低系统版本
+        script: |
+          set -e
+          APP="build/ios/iphoneos/Runner.app"
+          MIN_OS=$(plutil -extract MinimumOSVersion raw -o - "$APP/Info.plist")
+          echo "编译产物的 MinimumOSVersion = $MIN_OS"
+          if [ "$MIN_OS" != "$EXPECTED_IOS_TARGET" ]; then
+            echo "❌ 期望 $EXPECTED_IOS_TARGET，实际 $MIN_OS"
+            echo "请检查 ios/Runner.xcodeproj/project.pbxproj 与 ios/Flutter/AppFrameworkInfo.plist"
+            exit 1
+          fi
+          echo "✅ 部署目标正确：iOS $MIN_OS"
+
+      - name: 校验包内没有残留的旧部署目标
+        script: |
+          set -e
+          if grep -rn "IPHONEOS_DEPLOYMENT_TARGET = 1[0-4]\." ios/Runner.xcodeproj/project.pbxproj; then
+            echo "❌ Xcode 工程里还有低于 15.5 的部署目标"
+            exit 1
+          fi
+          echo "✅ Xcode 工程里的部署目标都不低于 15.5"
+
+    artifacts:
+      - build/ios/iphoneos/Runner.app
+      - /tmp/xcodebuild_logs/*.log
+      - flutter_drive.log
+
+  # ------------------------------------------------------------------
+  # 正式发布：签名后打 ipa 并上传 TestFlight。
+  # ------------------------------------------------------------------
+  ios-release:
+    name: iOS 签名构建并上传 TestFlight
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    integrations:
+      # 换成 Codemagic「Team settings → Team integrations」里
+      # App Store Connect API key 的名字。
+      app_store_connect: clean_my_photos_asc
+    environment:
+      flutter: 3.47.2
+      xcode: 26.6
+      cocoapods: default
+      # 让 Codemagic 自动安装证书和描述文件；不需要在脚本里手写 keychain 命令。
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.cleanphotos.cleanMyPhotos
+      vars:
+        BUNDLE_ID: com.cleanphotos.cleanMyPhotos
+        XCODE_WORKSPACE: Runner.xcworkspace
+        XCODE_SCHEME: Runner
+        # App Store Connect 里该 App 的 Apple ID（数字），用于取构建号。
+        # 首次发布前需要先在 App Store Connect 里手动创建 App 记录。
+        APP_STORE_APP_ID: 0
+    triggering:
+      events:
+        - tag
+      tag_patterns:
+        - pattern: "v*"
+          include: true
+    scripts:
+      - name: 读取依赖
+        script: flutter pub get
+
+      - name: 静态检查
+        script: flutter analyze
+
+      - name: 单元测试与界面测试
+        script: flutter test
+
+      - name: 安装 CocoaPods 依赖
+        script: |
+          find . -name "Podfile" -maxdepth 2 -execdir pod install \;
+
+      - name: 配置 Xcode 工程使用签名文件
+        script: |
+          xcode-project use-profiles
+
+      - name: 生成递增的构建号
+        script: |
+          set -e
+          if [ "$APP_STORE_APP_ID" != "0" ]; then
+            LATEST=$(app-store-connect get-latest-app-store-build-number "$APP_STORE_APP_ID")
+            BUILD_NUMBER=$((LATEST + 1))
+          else
+            # 还没在 App Store Connect 里建过 App 记录时，退化成用流水号，
+            # 保证同一个版本号下每次构建的 build number 都不重复。
+            BUILD_NUMBER=$PROJECT_BUILD_NUMBER
+          fi
+          echo "本次构建号：$BUILD_NUMBER"
+          echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$CM_ENV"
+
+      - name: 打包 ipa
+        script: |
+          flutter build ipa --release \
+            --build-number="$BUILD_NUMBER" \
+            --export-options-plist=/Users/builder/export_options.plist
+
+      - name: 校验 ipa 的最低系统版本
+        script: |
+          set -e
+          APP="build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app"
+          MIN_OS=$(plutil -extract MinimumOSVersion raw -o - "$APP/Info.plist")
+          echo "ipa 的 MinimumOSVersion = $MIN_OS"
+          test "$MIN_OS" = "15.5"
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - flutter_drive.log
+
+    publishing:
+      app_store_connect:
+        # 用 integrations 里配置的 API key，不在这里写明文密钥。
+        auth: integration
+        # 先只上 TestFlight，确认没问题后再手动提交审核。
+        submit_to_testflight: true
+        submit_to_app_store: false

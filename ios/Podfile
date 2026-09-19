@@ -1,0 +1,59 @@
+# 相册清理的 CocoaPods 配置。
+#
+# 这个文件在 Linux 上不会被用到（CocoaPods 只在 macOS 上跑），
+# 但必须提交进仓库：Codemagic 的 macOS 构建机会用 `pod install`
+# 安装 photo_manager 等插件的原生部分。
+
+# 部署目标必须与 Xcode 工程里的 IPHONEOS_DEPLOYMENT_TARGET、
+# AppFrameworkInfo.plist 的 MinimumOSVersion 保持一致，
+# 否则 CocoaPods 会报「deployment target 低于依赖要求」。
+platform :ios, '15.5'
+
+# CocoaPods 默认会在安装时同步上报统计信息，会明显拖慢安装速度。
+ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+
+project 'Runner', {
+  'Debug' => :debug,
+  'Profile' => :release,
+  'Release' => :release,
+}
+
+def flutter_root
+  generated_xcode_build_settings_path =
+    File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
+  unless File.exist?(generated_xcode_build_settings_path)
+    raise "#{generated_xcode_build_settings_path} must exist. " \
+          'If you\'re running pod install manually, make sure "flutter pub get" is executed first'
+  end
+
+  File.foreach(generated_xcode_build_settings_path) do |line|
+    matches = line.match(/FLUTTER_ROOT\=(.*)/)
+    return matches[1].strip if matches
+  end
+  raise "FLUTTER_ROOT not found in #{generated_xcode_build_settings_path}. " \
+        'Try deleting Generated.xcconfig, then run "flutter pub get"'
+end
+
+require File.expand_path(
+  File.join('packages', 'flutter_tools', 'bin', 'podhelper'),
+  flutter_root,
+)
+
+flutter_ios_podfile_setup
+
+target 'Runner' do
+  use_frameworks!
+
+  flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+
+  # 单元测试 target 只继承搜索路径，不重复安装一遍 Pod。
+  target 'RunnerTests' do
+    inherit! :search_paths
+  end
+end
+
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    flutter_additional_ios_build_settings(target)
+  end
+end

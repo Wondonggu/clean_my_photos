@@ -1,0 +1,42 @@
+name: clean_my_photos
+description: "相册清理 — 一个帮助你快速找出重复、相似、模糊、截图和超大文件并一键清理的相册管理 App。"
+publish_to: 'none'
+
+# version 的格式为 <major>.<minor>.<patch>+<build>。
+# iOS: CFBundleShortVersionString=1.0.0 / CFBundleVersion=1
+# Android: versionName=1.0.0 / versionCode=1
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.2.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # 中文本地化（Cupertino/Material 内置文案）
+  flutter_localizations:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.6
+
+  # 访问系统相册（iOS: PHPhotoLibrary, Android: MediaStore）
+  photo_manager: ^3.6.0
+
+  # 状态管理
+  provider: ^6.1.2
+
+  # 本地轻量持久化（清理偏好、上次清理时间等）
+  shared_preferences: ^2.2.2
+
+  # 纯 Dart 图像解码，用于计算感知哈希与模糊度（在 isolate 中运行）
+  image: ^4.5.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
