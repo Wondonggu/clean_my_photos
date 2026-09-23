@@ -207,9 +207,16 @@ class CleanupAnalyzer {
   }
 
   /// 模糊照片：最模糊的排最前面，方便优先处理。
+  ///
+  /// 判定在这里现算而不是读指纹里存好的结论，这样用户调设置页的
+  /// 「灵敏度」滑杆时立刻就能重排，不必把整本相册重扫一遍。
+  /// 清晰度不可信的（图太小、接近纯色）不参与判定，宁可少判不可错判。
   List<MediaItem> _blurry(List<AssetSignature> signatures) {
     final blurry = signatures
-        .where((s) => s.isBlurry && s.item.kind == MediaKind.image)
+        .where((s) =>
+            s.isReliable &&
+            s.item.kind == MediaKind.image &&
+            (s.sharpness ?? double.infinity) < blurThreshold)
         .toList();
 
     blurry.sort((a, b) =>

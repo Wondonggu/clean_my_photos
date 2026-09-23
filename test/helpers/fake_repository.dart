@@ -3,6 +3,8 @@ import 'dart:typed_data';
 import 'package:clean_my_photos/core/models/media_item.dart';
 import 'package:clean_my_photos/data/photo_repository.dart';
 
+import 'media_fixtures.dart';
+
 /// 内存里的假相册，用来在不对接 `photo_manager` 的情况下跑界面测试。
 class FakePhotoRepository implements PhotoRepository {
   FakePhotoRepository({
@@ -21,8 +23,28 @@ class FakePhotoRepository implements PhotoRepository {
 
   List<MediaAlbum> albums;
 
+  /// 按相册 id 指定内容；没配到的相册退化为返回整个 [items]。
+  Map<String, List<MediaItem>> albumItems = <String, List<MediaItem>>{};
+
+  /// 按条目 id 指定「它属于哪些相册」；没配到的返回空结果。
+  Map<String, AssetLocation> locations = <String, AssetLocation>{};
+
+  /// [fullImage] 返回的字节。默认给一张能解码的图，方便断言「放大了才去取」。
+  Uint8List? fullImageBytes = MediaFixtures.tinyPng;
+
+  /// 每次 [fullImage] 收到的参数，按调用顺序记录。
+  final List<({String id, int size})> fullImageCalls = <({String id, int size})>[];
+
   /// [thumbnail] 返回的字节；null 表示读取失败（界面上显示占位图）。
   Uint8List? thumbnailBytes;
+
+  /// 每次 [thumbnail] 收到的参数，按调用顺序记录下来。
+  ///
+  /// 用来断言「已经算过的照片不会重复请求缩略图」这类缓存行为。
+  final List<({String id, int size})> thumbnailCalls = <({String id, int size})>[];
+
+  /// 缩略图读取的模拟耗时，用来观察后台任务进行中的界面。
+  Duration thumbnailDelay = Duration.zero;
 
   /// 每次 [delete] 收到的 id 列表。
   final List<List<String>> deleteCalls = <List<String>>[];
@@ -72,12 +94,42 @@ class FakePhotoRepository implements PhotoRepository {
     String id, {
     int size = 256,
     int quality = 80,
-  }) async =>
-      thumbnailBytes;
+  }) async {
+    thumbnailCalls.add((id: id, size: size));
+    if (thumbnailDelay > Duration.zero) await Future<void>.delayed(thumbnailDelay);
+    return thumbnailBytes;
+  }
 
-  /// 界面上的「文件大小扫描」靠这个补全体积；假实现里直接用条目自带的 size。
   @override
-  Future<int> fileSize(String id) async => 0;
+  Future<Uint8List?> fullImage(String id, {int size = 3072}) async {
+    fullImageCalls.add((id: id, size: size));
+    if (thumbnailDelay > Duration.zero) await Future<void>.delayed(thumbnailDelay);
+    return fullImageBytes;
+  }
+
+  @override
+  Future<AssetLocation> locateAsset(String id) async =>
+      locations[id] ?? AssetLocation(assetId: id);
+
+  /// [fileSize] 的返回值；没配到的返回 0（界面会当成「没量到」）。
+  Map<String, int> fileSizes = <String, int>{};
+
+  /// 每次 [fileSize] 收到的 id，按调用顺序记录。
+  ///
+  /// 和 [thumbnailCalls] 一样，用来断言「缓存里已经有的大小不会再去问一遍」。
+  final List<String> fileSizeCalls = <String>[];
+
+  /// 查询大小的模拟耗时。大小扫描是逐条串行的，用它把任务拖住看界面。
+  Duration fileSizeDelay = Duration.zero;
+
+  @override
+  Future<int> fileSize(String id) async {
+    fileSizeCalls.add(id);
+    if (fileSizeDelay > Duration.zero) {
+      await Future<void>.delayed(fileSizeDelay);
+    }
+    return fileSizes[id] ?? 0;
+  }
 
   @override
   Future<MediaDeletionResult> delete(List<String> ids) async {
@@ -99,6 +151,8 @@ class FakePhotoRepository implements PhotoRepository {
   Future<List<MediaItem>> loadAlbumItems(
     String albumId, {
     int maxItems = 5000,
-  }) async =>
-      items.take(maxItems).toList(growable: false);
+  }) async {
+    final source = albumItems[albumId] ?? items;
+    return source.take(maxItems).toList(growable: false);
+  }
 }

@@ -102,21 +102,9 @@ void main() {
         MediaFixtures.photo(id: 'sharp'),
       ];
       final signatures = <AssetSignature>[
-        MediaFixtures.signature(
-          items[0],
-          sharpness: 5,
-          isBlurry: true,
-        ),
-        MediaFixtures.signature(
-          items[1],
-          sharpness: 60,
-          isBlurry: true,
-        ),
-        MediaFixtures.signature(
-          items[2],
-          sharpness: 800,
-          isBlurry: false,
-        ),
+        MediaFixtures.signature(items[0], sharpness: 5),
+        MediaFixtures.signature(items[1], sharpness: 60),
+        MediaFixtures.signature(items[2], sharpness: 800),
       ];
 
       final category = analyzer
@@ -128,6 +116,39 @@ void main() {
         <String>['very-blurry', 'slightly-blurry'],
       );
       expect(category.analyzed, isTrue);
+    });
+
+    test('模糊结论跟着阈值走，同一批指纹在不同阈值下结果不同', () {
+      // 指纹只存清晰度，是否模糊由 CleanupAnalyzer 按当前阈值现算，
+      // 所以调设置页的滑杆应该立刻生效，不需要重扫。
+      final items = <MediaItem>[MediaFixtures.photo(id: 'mid')];
+      final signatures = <AssetSignature>[
+        MediaFixtures.signature(items[0], sharpness: 60),
+      ];
+
+      final strict = const CleanupAnalyzer(blurThreshold: 30)
+          .buildCategories(items: items, signatures: signatures)[
+              CleanupCategoryType.blurry]!;
+      final lenient = const CleanupAnalyzer(blurThreshold: 100)
+          .buildCategories(items: items, signatures: signatures)[
+              CleanupCategoryType.blurry]!;
+
+      expect(strict.items, isEmpty);
+      expect(lenient.items.map((item) => item.id), <String>['mid']);
+    });
+
+    test('清晰度不可信的图片不参与模糊判定', () {
+      final items = <MediaItem>[MediaFixtures.photo(id: 'tiny')];
+      final signatures = <AssetSignature>[
+        // 图太小或接近纯色时拉普拉斯方差没有意义，宁可少判不可错判。
+        MediaFixtures.signature(items[0], sharpness: 1, isReliable: false),
+      ];
+
+      final category = analyzer
+          .buildCategories(items: items, signatures: signatures)[
+              CleanupCategoryType.blurry]!;
+
+      expect(category.items, isEmpty);
     });
 
     test('还有图片没算完清晰度时，标记为「分析未完成」', () {
@@ -219,7 +240,7 @@ void main() {
         MediaFixtures.photo(id: 'plain', size: 2000),
       ];
       final signatures = <AssetSignature>[
-        MediaFixtures.signature(items[0], sharpness: 5, isBlurry: true),
+        MediaFixtures.signature(items[0], sharpness: 5),
         MediaFixtures.signature(items[1], sharpness: 500),
       ];
 

@@ -145,6 +145,13 @@ class SettingsPage extends StatelessWidget {
               );
             },
           ),
+          ListTile(
+            leading: const Icon(Icons.delete_sweep_outlined),
+            title: const Text('清空扫描缓存'),
+            subtitle: const Text('分析结果会被记下来，下次打开直接复用。清空后下次要重算一遍'),
+            enabled: !library.isBusy,
+            onTap: () => _confirmClearCache(context, library),
+          ),
           if (library.sizeProgress != null)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -181,6 +188,35 @@ class SettingsPage extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 清缓存要确认一下：下次打开会重新分析几分钟，得让人知道自己在点什么。
+Future<void> _confirmClearCache(
+  BuildContext context,
+  LibraryController library,
+) async {
+  final messenger = ScaffoldMessenger.of(context);
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (BuildContext context) => AlertDialog(
+      title: const Text('清空扫描缓存？'),
+      content: const Text('已经算好的指纹和文件大小都会被丢掉，下次打开要重新分析一遍。'),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          child: const Text('清空'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true) return;
+
+  await library.clearScanCaches();
+  messenger.showSnackBar(const SnackBar(content: Text('扫描缓存已清空')));
 }
 
 class _SectionHeader extends StatelessWidget {

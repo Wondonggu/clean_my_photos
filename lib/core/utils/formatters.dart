@@ -82,6 +82,24 @@ String formatRelativeDate(DateTime date, {DateTime? now}) {
   return formatDate(date);
 }
 
+/// 时间线分组表头：`今天`、`昨天`、`5 月 6 日`、`2023 年 5 月 6 日`。
+///
+/// 刻意不复用 [formatRelativeDate]：那个返回的是「今天 14:30」，挂在整天的
+/// 分组上会让人以为这一组只有一张照片。
+///
+/// [now] 仅用于测试注入。
+String formatDayLabel(DateTime day, {DateTime? now}) {
+  final current = now ?? DateTime.now();
+  final today = DateTime(current.year, current.month, current.day);
+  final target = DateTime(day.year, day.month, day.day);
+  final diffDays = today.difference(target).inDays;
+
+  if (diffDays == 0) return '今天';
+  if (diffDays == 1) return '昨天';
+  if (target.year == today.year) return '${day.month} 月 ${day.day} 日';
+  return '${day.year} 年 ${day.month} 月 ${day.day} 日';
+}
+
 /// 带千位分隔符的计数，例如 `12,345`。
 String formatCount(int count) {
   final text = count.abs().toString();

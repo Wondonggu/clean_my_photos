@@ -88,6 +88,10 @@ class SignatureAnalyzer {
   final int thumbnailSize;
 
   final int thumbnailQuality;
+
+  /// 只影响 [ImageFingerprint.isBlurry]（分析器自己的粗判），
+  /// 清理建议里的「模糊照片」是 [CleanupAnalyzer] 按用户当前阈值现算的，
+  /// 因此调设置页的滑杆不会经过这里。
   final double blurThreshold;
 
   /// 是否放到后台 isolate 里计算。默认在移动端开启、Web 上关闭。
@@ -96,10 +100,15 @@ class SignatureAnalyzer {
   bool get _isolatesEnabled => useIsolates ?? !kIsWeb;
 
   /// [loadThumbnail] 由数据层提供（通常是 [PhotoRepository.thumbnail]）。
+  ///
+  /// [onBatch] 每算完一小批就回调一次，只带**这一批新算出来**的结果（不含
+  /// 传进来时就已经是成品的那部分）。落盘缓存的时机由调用方决定：回调里
+  /// 就写盘的话，中途被杀最坏只丢一批。
   Future<List<AssetSignature>> analyze({
     required List<MediaItem> items,
     required Future<Uint8List?> Function(MediaItem item) loadThumbnail,
     void Function(int done, int total)? onProgress,
+    void Function(List<AssetSignature> batch)? onBatch,
     CancelSignal? cancel,
   }) async {
     final targets = items
@@ -126,6 +135,8 @@ class SignatureAnalyzer {
 
       final jobs = <ThumbnailJob>[];
       final pending = <MediaItem>[];
+      // 这一小批新算出来的结果，算完交给 onBatch。
+      final batch = <AssetSignature>[];
 
       final bytesList = await Future.wait(
         window.map((item) async {
@@ -140,8 +151,12 @@ class SignatureAnalyzer {
       for (var i = 0; i < window.length; i++) {
         final bytes = bytesList[i];
         if (bytes == null || bytes.isEmpty) {
-          results[window[i].id] =
+          // iCloud 里的照片当下读不到，过一会儿可能就好了，所以这条失败
+          // 也会进 onBatch——由缓存层判断它够不够格落盘。
+          final signature =
               AssetSignature(item: window[i], failure: '缩略图不可用');
+          results[window[i].id] = signature;
+          batch.add(signature);
           continue;
         }
         jobs.add(ThumbnailJob(id: window[i].id, bytes: bytes));
@@ -155,17 +170,21 @@ class SignatureAnalyzer {
           if (index < 0) continue;
           final item = pending[index];
           final fingerprint = analysis.fingerprint;
-          results[item.id] = fingerprint == null
+          final signature = fingerprint == null
               ? AssetSignature(item: item, failure: analysis.error)
               : AssetSignature(
                   item: item,
                   hash: fingerprint.hash,
                   sharpness: fingerprint.sharpness,
-                  isBlurry: fingerprint.isBlurry,
+                  isReliable: fingerprint.isReliable,
                   failure: null,
                 );
+          results[item.id] = signature;
+          batch.add(signature);
         }
       }
+
+      if (batch.isNotEmpty) onBatch?.call(batch);
 
       done += window.length;
       onProgress?.call(done, targets.length);

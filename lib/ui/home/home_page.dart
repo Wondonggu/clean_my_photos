@@ -3,8 +3,10 @@ import 'package:provider/provider.dart';
 
 import '../../core/models/cleanup_category.dart';
 import '../../core/utils/formatters.dart';
+import '../../state/cleanup_progress_controller.dart';
 import '../../state/library_controller.dart';
 import '../albums/albums_page.dart';
+import '../browse/timeline_page.dart';
 import '../permission/permission_view.dart';
 import '../review/category_review_page.dart';
 import '../settings/settings_page.dart';
@@ -19,6 +21,11 @@ class HomePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final library = context.watch<LibraryController>();
+    final progress = context.watch<CleanupProgressController>();
+    // 上次没清完就在时间线入口上点一个点：用户杀进程重开之后，
+    // 至少能看出「还有一摊没收拾完」。
+    final hasUnfinished =
+        progress.progressFor(TimelinePage.scope)?.isEmpty == false;
 
     return Scaffold(
       appBar: AppBar(
@@ -26,6 +33,18 @@ class HomePage extends StatelessWidget {
         actions: <Widget>[
           if (library.phase == LibraryPhase.ready &&
               library.items.isNotEmpty) ...<Widget>[
+            IconButton(
+              tooltip: hasUnfinished ? '时间线（有未完成的清理）' : '时间线',
+              icon: Badge(
+                isLabelVisible: hasUnfinished,
+                child: const Icon(Icons.calendar_view_day_outlined),
+              ),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const TimelinePage(),
+                ),
+              ),
+            ),
             IconButton(
               tooltip: '相册',
               icon: const Icon(Icons.photo_album_outlined),
@@ -86,7 +105,7 @@ class HomePage extends StatelessWidget {
 
       case LibraryPhase.loading:
         if (library.items.isEmpty) {
-          return _LoadingView(progress: library.imageProgress);
+          return _LoadingView(progress: library.loadProgress);
         }
         return _ReadyView(library: library);
 
@@ -209,10 +228,8 @@ class _ReadyView extends StatelessWidget {
                   '（共 ${formatCount(library.totalCount)} 项）。',
             ),
           ],
-          if (library.isBusy) ...<Widget>[
-            const SizedBox(height: 12),
-            _TaskBanner(library: library),
-          ],
+          // 后台任务的进度不在这里显示：它挂在 `MaterialApp.builder` 上，
+          // 任何页面都看得见，首页再放一条就是同一件事说两遍。
           if (!library.imageAnalysisDone && !library.isBusy) ...<Widget>[
             const SizedBox(height: 12),
             _AnalyzePrompt(onStart: library.runImageAnalysis),
@@ -357,38 +374,6 @@ class _SummaryStat extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _TaskBanner extends StatelessWidget {
-  const _TaskBanner({required this.library});
-
-  final LibraryController library;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final progress = library.imageProgress ?? library.sizeProgress;
-    if (progress == null) return const SizedBox.shrink();
-
-    return _NoticeBanner(
-      icon: Icons.autorenew,
-      color: theme.colorScheme.primary,
-      text: progress.isIndeterminate
-          ? '${progress.label}…'
-          : '${progress.label} '
-              '${formatCount(progress.done)}/${formatCount(progress.total)}',
-      trailing: SizedBox(
-        width: 56,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(3),
-          child: LinearProgressIndicator(
-            value: progress.isIndeterminate ? null : progress.ratio,
-            minHeight: 4,
-          ),
-        ),
-      ),
     );
   }
 }

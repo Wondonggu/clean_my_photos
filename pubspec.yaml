@@ -32,6 +32,9 @@ dependencies:
   # 纯 Dart 图像解码，用于计算感知哈希与模糊度（在 isolate 中运行）
   image: ^4.5.0
 
+  # 扫描缓存的落盘位置（iOS 上是 App 沙盒的 Documents 目录）
+  path_provider: ^2.1.4
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

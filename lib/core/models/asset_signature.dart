@@ -10,7 +10,7 @@ class AssetSignature {
     required this.item,
     this.hash,
     this.sharpness,
-    this.isBlurry = false,
+    this.isReliable = true,
     this.failure,
   });
 
@@ -22,8 +22,11 @@ class AssetSignature {
   /// 清晰度（拉普拉斯方差）。
   final double? sharpness;
 
-  /// 是否被判定为模糊。
-  final bool isBlurry;
+  /// 清晰度结论是否可信（图太小或接近纯色时不可信）。
+  ///
+  /// 刻意不在这里存「是否模糊」：那要看用户在设置里选的阈值，
+  /// 存下来就得在改阈值时重扫一遍。改由 [CleanupAnalyzer] 现算。
+  final bool isReliable;
 
   /// 分析失败的原因，仅用于诊断。
   final String? failure;
@@ -39,14 +42,14 @@ class AssetSignature {
     MediaItem? item,
     PerceptualHash? hash,
     double? sharpness,
-    bool? isBlurry,
+    bool? isReliable,
     String? failure,
   }) {
     return AssetSignature(
       item: item ?? this.item,
       hash: hash ?? this.hash,
       sharpness: sharpness ?? this.sharpness,
-      isBlurry: isBlurry ?? this.isBlurry,
+      isReliable: isReliable ?? this.isReliable,
       failure: failure ?? this.failure,
     );
   }

@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:photo_manager/photo_manager.dart';
 
 import '../core/models/media_item.dart';
+import 'asset_locator_channel.dart';
 import 'photo_repository.dart';
 
 /// 基于 `photo_manager` 的真实相册数据源。
@@ -14,7 +15,13 @@ import 'photo_repository.dart';
 /// * Android 没有对应的标记，退化为按路径与文件名判断；
 /// * 相册的「文件大小」在 iOS 上没有批量接口，只能逐个查询。
 class PhotoManagerRepository implements PhotoRepository {
-  PhotoManagerRepository();
+  PhotoManagerRepository({AssetLocatorChannel? locator})
+      : _locator = locator ?? AssetLocatorChannel(isSupportedPlatform: _isDarwinPlatform);
+
+  static final bool _isDarwinPlatform = Platform.isIOS || Platform.isMacOS;
+
+  /// 「这张照片属于哪些相册」只能问原生，见 [AssetLocatorChannel]。
+  final AssetLocatorChannel _locator;
 
   /// id → AssetEntity，用于后续按 id 取缩略图 / 大小 / 删除。
   final Map<String, AssetEntity> _entities = <String, AssetEntity>{};
@@ -189,6 +196,32 @@ class PhotoManagerRepository implements PhotoRepository {
       return null;
     }
   }
+
+  @override
+  Future<Uint8List?> fullImage(String id, {int size = 3072}) async {
+    final entity = _entities[id];
+    if (entity == null) return null;
+
+    // 原图本来就没那么大时不必再放大一次：插值出来的「高清」只是更占内存。
+    final shortest = math.min(entity.width, entity.height);
+    if (shortest > 0 && shortest <= _fullImageSkipBelow) return null;
+
+    try {
+      return await entity.thumbnailDataWithSize(
+        ThumbnailSize(size, size),
+        quality: 92,
+        format: ThumbnailFormat.jpeg,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 短边不超过这个值时，放大没有意义。
+  static const int _fullImageSkipBelow = 1024;
+
+  @override
+  Future<AssetLocation> locateAsset(String id) => _locator.locate(id);
 
   @override
   Future<int> fileSize(String id) async {
