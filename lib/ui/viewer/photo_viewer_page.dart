@@ -257,7 +257,18 @@ class _ZoomablePhotoState extends State<_ZoomablePhoto>
       return;
     }
     widget.onNeedsFullImage();
-    _animateTo(Matrix4.identity()..scale(doubleTapScale));
+    _animateTo(_scaledBy(doubleTapScale));
+  }
+
+  /// 等比放大的变换矩阵。
+  ///
+  /// 不用 `Matrix4.scale`：新版 vector_math 把它废弃了（提示改用
+  /// `scaleByDouble`），而 `scaleByDouble` 在旧版里还不存在。手写对角线
+  /// 两边都能编过，也不欠版本债。
+  static Matrix4 _scaledBy(double scale) {
+    return Matrix4.identity()
+      ..setEntry(0, 0, scale)
+      ..setEntry(1, 1, scale);
   }
 
   void _animateTo(Matrix4 target) {

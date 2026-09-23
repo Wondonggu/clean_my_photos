@@ -53,6 +53,13 @@ Future<void> _doubleTap(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+/// 当前这一页放大到了几倍。
+double _zoomOf(WidgetTester tester) {
+  final viewer =
+      tester.widget<InteractiveViewer>(find.byType(InteractiveViewer));
+  return viewer.transformationController!.value.getMaxScaleOnAxis();
+}
+
 Future<void> _swipeToNext(WidgetTester tester) async {
   await tester.fling(find.byType(PageView), const Offset(-300, 0), 1000);
   await tester.pumpAndSettle();
@@ -77,11 +84,20 @@ void main() {
     // 预览用的缩略图长边只有 1024，进页面就预取高清图太亏。
     expect(repository.fullImageCalls, isEmpty);
 
+    expect(_zoomOf(tester), closeTo(1, 0.01));
+
     await _doubleTap(tester);
 
     expect(repository.fullImageCalls, hasLength(1));
     expect(repository.fullImageCalls.single.id, 'a');
     expect(repository.fullImageCalls.single.size, 3072);
+    // 光断言「去取高清图了」不够：取图发生在动画之前，变换矩阵算错了
+    // 也照样会发这个请求。这里盯的是画面真的放大了。
+    expect(_zoomOf(tester), closeTo(2.5, 0.01));
+
+    // 再双击一次缩回去。
+    await _doubleTap(tester);
+    expect(_zoomOf(tester), closeTo(1, 0.01));
   });
 
   testWidgets('翻到下一张会重新取高清图，不会拿上一张的凑数', (tester) async {
