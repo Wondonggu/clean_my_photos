@@ -15,11 +15,12 @@ import '../widgets/media_thumbnail.dart';
 
 /// 滑动清理。
 ///
-/// 一张一张地看：**上滑删除、下滑保留、左滑撤销**。比在网格里逐个点选快得多，
-/// 而且每一张都能看清，不容易误删。滑到底之后再一次性确认。
+/// 一张一张地看：**上滑删除、右滑保留、下滑或左滑撤销**。比在网格里逐个点选
+/// 快得多，而且每一张都能看清，不容易误删。滑到底之后再一次性确认。
 ///
-/// 方向是竖着的，跟系统相册（上滑删除）一致；横向留给「撤销」，因为它是个
-/// 回头动作，跟「往前推进」的上下滑不该抢同一根轴。
+/// 四个方向各司其职：往前推进的「上滑删除」跟系统相册一致；「右滑保留」给
+/// 不想删的那张一个干脆的出口；「撤销」是回头动作，并到下滑与左滑两条路，
+/// 手指往哪儿回都能撤，不必费心分辨是哪一边。
 class SwipeCleanPage extends StatefulWidget {
   const SwipeCleanPage({
     super.key,
@@ -53,11 +54,13 @@ class SwipeCleanPage extends StatefulWidget {
 }
 
 /// 一次滑动决定，用于撤销。
+///
+/// 只可能是删除或保留：撤销不产生决定，它撤掉一个决定。
 class _Decision {
-  const _Decision(this.item, {required this.deleteIt});
+  const _Decision(this.item, {required this.verdict});
 
   final MediaItem item;
-  final bool deleteIt;
+  final SwipeVerdict verdict;
 }
 
 class _SwipeCleanPageState extends State<SwipeCleanPage>
@@ -86,7 +89,7 @@ class _SwipeCleanPageState extends State<SwipeCleanPage>
 
   List<MediaItem> get _marked => <MediaItem>[
         for (final decision in _decisions)
-          if (decision.deleteIt) decision.item,
+          if (decision.verdict == SwipeVerdict.delete) decision.item,
       ];
 
   bool get _finished => _index >= _remaining.length;
@@ -181,23 +184,29 @@ class _SwipeCleanPageState extends State<SwipeCleanPage>
       extentY: size.height,
     );
 
-    switch (verdict) {
-      case SwipeVerdict.delete:
-        _commit(deleteIt: true);
-      case SwipeVerdict.keep:
-        _commit(deleteIt: false);
-      case SwipeVerdict.undo:
-        _rewind();
-      case null:
-        setState(() => _gesture = SwipeGestureState.idle);
+    if (verdict == null) {
+      // 没到线，卡片弹回原位。
+      setState(() => _gesture = SwipeGestureState.idle);
+      return;
     }
+    // 撤销不产生决定，它撤掉一个决定，所以走另一条路。
+    if (verdict == SwipeVerdict.undo) {
+      _rewind();
+      return;
+    }
+    _commit(verdict: verdict);
   }
 
-  /// 卡片离场的方向。删除往上、保留往下，跟手势方向一致。
-  Offset _exitOffset({required bool deleteIt, required Size extent}) => Offset(
-        0,
-        deleteIt ? -extent.height * 1.2 : extent.height * 1.2,
-      );
+  /// 卡片离场的方向，跟手势方向一致。
+  ///
+  /// 删除往上、保留往右。撤销用不到（它把卡请回来，方向由 [_rewind] 自己定）。
+  Offset _exitOffset({
+    required SwipeVerdict verdict,
+    required Size extent,
+  }) =>
+      verdict == SwipeVerdict.delete
+          ? Offset(0, -extent.height * 1.2)
+          : Offset(extent.width * 1.2, 0);
 
   /// 把卡片从当前位置飞到 [to]，沿途更新 [_flyOffset]。
   Future<void> _animate({required Offset to, required Curve curve}) async {
@@ -214,11 +223,11 @@ class _SwipeCleanPageState extends State<SwipeCleanPage>
     _fly.reset();
   }
 
-  Future<void> _commit({required bool deleteIt}) async {
+  Future<void> _commit({required SwipeVerdict verdict}) async {
     if (_animating || _finished) return;
 
     final item = _remaining[_index];
-    final to = _exitOffset(deleteIt: deleteIt, extent: MediaQuery.of(context).size);
+    final to = _exitOffset(verdict: verdict, extent: MediaQuery.of(context).size);
     // 从卡片当前的位置接着往外飞：按钮触发时它停在正中，甩出去触发时它已经
     // 跟着手指走了一截，直接跳到终点会闪一下。
     final from = _cardOffset;
@@ -233,7 +242,7 @@ class _SwipeCleanPageState extends State<SwipeCleanPage>
     if (!mounted) return;
 
     setState(() {
-      _decisions.add(_Decision(item, deleteIt: deleteIt));
+      _decisions.add(_Decision(item, verdict: verdict));
       _index++;
       _flyOffset = Offset.zero;
       _animating = false;
@@ -257,7 +266,7 @@ class _SwipeCleanPageState extends State<SwipeCleanPage>
       _decisions.removeLast();
       _index--;
       _gesture = SwipeGestureState.idle;
-      _flyOffset = _exitOffset(deleteIt: decision.deleteIt, extent: size);
+      _flyOffset = _exitOffset(verdict: decision.verdict, extent: size);
     });
 
     await _animate(to: Offset.zero, curve: Curves.easeOutCubic);
@@ -279,17 +288,10 @@ class _SwipeCleanPageState extends State<SwipeCleanPage>
     final result = await performDeletion(context, items);
     if (!mounted || result == null || result.deletedCount == 0) return;
 
-    // 系统可能只删掉了一部分，因此以它实际删掉的那些 id 为准，
-    // 而不是假设标记过的都删成功了。
-    //
     // 这里刻意不拿整库列表来算「还剩下谁」：本页可能是从某个相册或某段时间线
     // 打开的，条目未必完整地出现在整库列表里（整库读取有 30000 条上限），
     // 那样会把没删掉的也一起丢掉。
-    final failed = result.failedIds.toSet();
-    final deleted = <String>{
-      for (final item in items)
-        if (!item.isFavorite && !failed.contains(item.id)) item.id,
-    };
+    final deleted = deletedIds(items, result);
 
     setState(() {
       _remaining =
@@ -367,8 +369,8 @@ class _SwipeCleanPageState extends State<SwipeCleanPage>
           : _ActionBar(
               enabled: !_animating,
               canUndo: _decisions.isNotEmpty,
-              onKeep: () => _commit(deleteIt: false),
-              onDelete: () => _commit(deleteIt: true),
+              onKeep: () => _commit(verdict: SwipeVerdict.keep),
+              onDelete: () => _commit(verdict: SwipeVerdict.delete),
               onUndo: _rewind,
             ),
     );
@@ -408,6 +410,7 @@ class _Deck extends StatelessWidget {
     final next = index + 1 < items.length ? items[index + 1] : null;
 
     final intent = gesture.intent;
+    final direction = gesture.direction;
     final progress = gesture.progress(
       extentX: extent.width,
       extentY: extent.height,
@@ -465,12 +468,12 @@ class _Deck extends StatelessWidget {
                         ),
                       ),
                     ),
-                    if (intent != null && progress > 0.05)
+                    if (intent != null && direction != null && progress > 0.05)
                       IgnorePointer(
                         child: Align(
                           // 徽标停在卡片的「反端」——离退出方向最远、停留最久
                           // 的那一端，这样章在整个滑动过程里都看得见。
-                          alignment: _anchorFor(intent),
+                          alignment: _anchorFor(direction),
                           child: Padding(
                             padding: const EdgeInsets.all(20),
                             child: Opacity(
@@ -494,10 +497,11 @@ class _Deck extends StatelessWidget {
     );
   }
 
-  static Alignment _anchorFor(SwipeVerdict verdict) => switch (verdict) {
-        SwipeVerdict.delete => Alignment.bottomCenter,
-        SwipeVerdict.keep => Alignment.topCenter,
-        SwipeVerdict.undo => Alignment.centerRight,
+  static Alignment _anchorFor(SwipeDirection direction) => switch (direction) {
+        SwipeDirection.up => Alignment.bottomCenter,
+        SwipeDirection.down => Alignment.topCenter,
+        SwipeDirection.left => Alignment.centerRight,
+        SwipeDirection.right => Alignment.centerLeft,
       };
 
   static String _labelFor(SwipeVerdict verdict) => switch (verdict) {
@@ -644,7 +648,7 @@ class _ActionBar extends StatelessWidget {
                 ),
                 _CircleAction(
                   key: const Key('swipe-action-keep'),
-                  icon: Icons.arrow_downward,
+                  icon: Icons.arrow_forward,
                   label: '保留',
                   color: AppColors.success,
                   onPressed: enabled ? onKeep : null,
@@ -663,7 +667,8 @@ class _ActionBar extends StatelessWidget {
             const SizedBox(height: 10),
             // 手势本身没法被发现，这行常驻提示是最省事的补救。
             Text(
-              '上滑删除 · 下滑保留 · 左滑撤销',
+              '上滑删除 · 右滑保留 · 下滑或左滑撤销',
+              textAlign: TextAlign.center,
               style: TextStyle(fontSize: 11, color: muted),
             ),
           ],

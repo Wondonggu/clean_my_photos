@@ -22,10 +22,6 @@ class TimelinePage extends StatelessWidget {
 
   static const String scope = CleanupScopes.timeline;
 
-  /// 每天表头的高度。`SliverPersistentHeader` 要求一个确定的数字，
-  /// 所以这里得写死，不能用内容自适应。
-  static const double _headerExtent = 56;
-
   @override
   Widget build(BuildContext context) {
     final library = context.watch<LibraryController>();
@@ -42,7 +38,13 @@ class TimelinePage extends StatelessWidget {
               key: const Key('timeline-swipe'),
               tooltip: '滑动清理',
               icon: const Icon(Icons.swipe),
-              onPressed: () => _openSwipe(context, items, progress),
+              onPressed: () => _openSwipe(
+                context,
+                items,
+                title: '时间线',
+                scope: scope,
+                progress: progress,
+              ),
             ),
         ],
       ),
@@ -62,11 +64,11 @@ class TimelinePage extends StatelessWidget {
     CleanupProgress? record,
     CleanupProgressController progress,
   ) {
-    // 每天在整条时间线里的起始下标。查看器要能跨天连续翻阅，
-    // 所以传给它的是整条列表，而不是当天的切片。
-    final blocks = <({DaySection section, int start})>[];
+    // 每个月在整条时间线里的起始下标。查看器要能跨月连续翻阅，
+    // 所以传给它的是整条列表，而不是这个月的切片。
+    final blocks = <({MonthSection section, int start})>[];
     var start = 0;
-    for (final section in groupByDay(items)) {
+    for (final section in groupByMonth(items)) {
       blocks.add((section: section, start: start));
       start += section.items.length;
     }
@@ -79,7 +81,13 @@ class TimelinePage extends StatelessWidget {
           SliverToBoxAdapter(
             child: _ResumeBanner(
               record: record,
-              onContinue: () => _openSwipe(context, items, progress),
+              onContinue: () => _openSwipe(
+                context,
+                items,
+                title: '时间线',
+                scope: scope,
+                progress: progress,
+              ),
               onRestart: () => progress.reset(scope),
             ),
           ),
@@ -95,15 +103,20 @@ class TimelinePage extends StatelessWidget {
             ),
           ),
         for (final block in blocks) ...<Widget>[
-          SliverPersistentHeader(
-            pinned: true,
-            delegate: _DayHeaderDelegate(
-              extent: _headerExtent,
-              child: _DayHeader(
-                section: block.section,
-                // 单日清理不记进度：一天的量有限，走完就走完了；
-                // 记下来反而会攒出一堆再也不用的作用域。
-                onSwipe: () => _openSwipe(context, block.section.items, null),
+          // 表头**不吸顶**：`pinned: true` 会让每个月的表头依次叠在视口
+          // 顶部，滚过几个月就堆成一片，把后续内容盖住。
+          SliverToBoxAdapter(
+            child: _MonthHeader(
+              section: block.section,
+              record: _recordFor(block.section, progress),
+              onSwipe: () => _openSwipe(
+                context,
+                block.section.items,
+                title: block.section.month == null
+                    ? '未知时间'
+                    : formatMonthLabel(block.section.month!),
+                scope: _scopeFor(block.section),
+                progress: progress,
               ),
             ),
           ),
@@ -137,20 +150,35 @@ class TimelinePage extends StatelessWidget {
     );
   }
 
+  /// 这些条目记在哪个作用域下。时间未知的那一组不记。
+  static String? _scopeFor(MonthSection section) =>
+      section.month == null ? null : CleanupScopes.month(section.month!);
+
+  static CleanupProgress? _recordFor(
+    MonthSection section,
+    CleanupProgressController progress,
+  ) {
+    final scope = _scopeFor(section);
+    return scope == null ? null : progress.progressFor(scope);
+  }
+
   void _openSwipe(
     BuildContext context,
-    List<MediaItem> items,
-    CleanupProgressController? progress,
-  ) {
+    List<MediaItem> items, {
+    required String title,
+    String? scope,
+    required CleanupProgressController progress,
+  }) {
     if (items.isEmpty) return;
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => SwipeCleanPage(
-          title: '时间线',
+          title: title,
           items: items,
-          // 没给进度控制器（单日清理）时从头看。
-          startIndex: progress?.startIndexFor(scope, items) ?? 0,
-          scope: progress == null ? null : scope,
+          // 没有作用域（时间未知的那一组）时从头看，也不记进度。
+          startIndex:
+              scope == null ? 0 : progress.startIndexFor(scope, items),
+          scope: scope,
         ),
       ),
     );
@@ -172,16 +200,25 @@ class TimelinePage extends StatelessWidget {
 
 // ------------------------------------------------------------------ 表头与横幅
 
-class _DayHeader extends StatelessWidget {
-  const _DayHeader({required this.section, required this.onSwipe});
+class _MonthHeader extends StatelessWidget {
+  const _MonthHeader({
+    required this.section,
+    required this.record,
+    required this.onSwipe,
+  });
 
-  final DaySection section;
+  final MonthSection section;
+
+  /// 这个月上次清到哪儿了；没清理过为 null。
+  final CleanupProgress? record;
+
   final VoidCallback onSwipe;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final day = section.day;
+    final month = section.month;
+    final done = record != null && !record!.isEmpty;
 
     return Material(
       // 得有底色：不然网格会从表头底下透出来。
@@ -192,7 +229,7 @@ class _DayHeader extends StatelessWidget {
           children: <Widget>[
             Flexible(
               child: Text(
-                day == null ? '未知时间' : formatDayLabel(day),
+                month == null ? '未知时间' : formatMonthLabel(month),
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.titleSmall,
               ),
@@ -204,9 +241,22 @@ class _DayHeader extends StatelessWidget {
                 color: theme.colorScheme.onSurface.withAlpha(150),
               ),
             ),
+            if (done) ...<Widget>[
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  // 一个月可能上千张，看得见「清到一半」比什么都重要。
+                  '已处理 ${formatCount(record!.processed)}',
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.primary,
+                  ),
+                ),
+              ),
+            ],
             const Spacer(),
             IconButton(
-              tooltip: '滑动清理这一天',
+              tooltip: '滑动清理这个月',
               iconSize: 18,
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints.tightFor(width: 40, height: 40),
@@ -218,27 +268,6 @@ class _DayHeader extends StatelessWidget {
       ),
     );
   }
-}
-
-class _DayHeaderDelegate extends SliverPersistentHeaderDelegate {
-  const _DayHeaderDelegate({required this.extent, required this.child});
-
-  final double extent;
-  final Widget child;
-
-  @override
-  double get minExtent => extent;
-
-  @override
-  double get maxExtent => extent;
-
-  @override
-  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) =>
-      SizedBox(height: extent, child: child);
-
-  @override
-  bool shouldRebuild(covariant _DayHeaderDelegate old) =>
-      old.extent != extent || old.child != child;
 }
 
 class _ResumeBanner extends StatelessWidget {

@@ -54,3 +54,21 @@ Future<MediaDeletionResult?> performDeletion(
   messenger.showSnackBar(SnackBar(content: Text(message)));
   return result;
 }
+
+/// 从一次删除的结果里算出**真正被删掉**的 id。
+///
+/// 系统可能只删掉一部分，所以以它报告的失败项为准，而不是假设标记过的都删
+/// 成功了；收藏的照片本来就删不掉，一并剔掉。
+///
+/// 刻意不在这里回调 `onDeleted`：什么时候通知调用方（先出栈还是先更新列表）
+/// 由各自的时序决定，这个函数只负责算，不负责喊。
+Set<String> deletedIds(
+  Iterable<MediaItem> requested,
+  MediaDeletionResult result,
+) {
+  final failed = result.failedIds.toSet();
+  return <String>{
+    for (final item in requested)
+      if (!item.isFavorite && !failed.contains(item.id)) item.id,
+  };
+}

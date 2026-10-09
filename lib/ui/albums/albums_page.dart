@@ -239,6 +239,9 @@ class _AlbumDetailPageState extends State<AlbumDetailPage> {
                     items: items,
                     initialIndex: index,
                     selection: null,
+                    // 本页自己存着一份 `_loaded` 快照，不主动剪枝的话
+                    // 删掉的照片会一直留在网格里。
+                    onDeleted: (ids) => setState(() => _deleted.addAll(ids)),
                   ),
                 ),
               ),

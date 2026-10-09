@@ -100,6 +100,25 @@ String formatDayLabel(DateTime day, {DateTime? now}) {
   return '${day.year} 年 ${day.month} 月 ${day.day} 日';
 }
 
+/// 时间线分组表头：`本月`、`上个月`、`5 月`、`2023 年 5 月`。
+///
+/// 与 [formatDayLabel] 同一套规则——同年省略年份，只是把「今天 / 昨天」
+/// 换成「本月 / 上个月」。月分组下一年只有 12 个表头，年份必须留着。
+///
+/// [now] 仅用于测试注入。
+String formatMonthLabel(DateTime month, {DateTime? now}) {
+  final current = now ?? DateTime.now();
+  final target = DateTime(month.year, month.month);
+  final thisMonth = DateTime(current.year, current.month);
+  final diffMonths =
+      (thisMonth.year - target.year) * 12 + (thisMonth.month - target.month);
+
+  if (diffMonths == 0) return '本月';
+  if (diffMonths == 1) return '上个月';
+  if (target.year == thisMonth.year) return '${month.month} 月';
+  return '${month.year} 年 ${month.month} 月';
+}
+
 /// 带千位分隔符的计数，例如 `12,345`。
 String formatCount(int count) {
   final text = count.abs().toString();

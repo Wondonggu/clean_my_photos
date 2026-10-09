@@ -10,6 +10,15 @@ abstract final class CleanupScopes {
   static String album(String albumId) => 'album:$albumId';
 
   static String category(String typeName) => 'category:$typeName';
+
+  /// 时间线里某个月的断点，例如 `timeline:2024-05`。
+  ///
+  /// 一个月的量可能上千张，所以按月单独记：整条时间线的断点管不了这么细，
+  /// 而按月分组之后每次进去正好是一个月的切片。
+  static String month(DateTime month) {
+    final padded = month.month.toString().padLeft(2, '0');
+    return 'timeline:${month.year}-$padded';
+  }
 }
 
 /// 一次清理进行到哪儿了。

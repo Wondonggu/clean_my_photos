@@ -95,7 +95,7 @@ void main() {
       items: _threePhotos(),
     );
 
-    expect(find.text('上滑删除 · 下滑保留 · 左滑撤销'), findsOneWidget);
+    expect(find.text('上滑删除 · 右滑保留 · 下滑或左滑撤销'), findsOneWidget);
   });
 
   testWidgets('上滑删除：每一张都记进待删列表，滑完进入结束页', (tester) async {
@@ -116,7 +116,7 @@ void main() {
     expect(find.text('标记了 3 项'), findsOneWidget);
   });
 
-  testWidgets('下滑保留：什么都不记，滑完只剩「都留下了」', (tester) async {
+  testWidgets('右滑保留：什么都不记，滑完只剩「都留下了」', (tester) async {
     usePhoneSurface(tester);
 
     await _pumpSwipe(
@@ -127,7 +127,7 @@ void main() {
 
     for (final id in <String>['a', 'b', 'c']) {
       expect(_card(id), findsOneWidget);
-      await tester.fling(_deck, const Offset(0, 200), 3000);
+      await tester.fling(_deck, const Offset(250, 0), 3000);
       await tester.pumpAndSettle();
     }
 
@@ -156,7 +156,7 @@ void main() {
     expect(_card('b'), findsNothing);
   });
 
-  testWidgets('右滑没有对应操作，甩得再快也弹回原样', (tester) async {
+  testWidgets('右滑保留：这一张放过，轮到下一张', (tester) async {
     usePhoneSurface(tester);
 
     await _pumpSwipe(
@@ -168,8 +168,8 @@ void main() {
     await tester.fling(_deck, const Offset(250, 0), 4000);
     await tester.pumpAndSettle();
 
-    expect(_card('a'), findsOneWidget);
-    expect(_card('b'), findsNothing);
+    expect(_card('a'), findsNothing);
+    expect(_card('b'), findsOneWidget);
   });
 
   testWidgets('滑得不够远就弹回，不算数', (tester) async {
@@ -227,11 +227,12 @@ void main() {
 
     expect(find.byKey(const Key('verdict-delete')), findsOneWidget);
 
+    // 反手往下拖：下滑现在是撤销，亮的是撤销徽标。
     await gesture.moveBy(const Offset(0, 160));
     await tester.pump();
 
     expect(find.byKey(const Key('verdict-delete')), findsNothing);
-    expect(find.byKey(const Key('verdict-keep')), findsOneWidget);
+    expect(find.byKey(const Key('verdict-undo')), findsOneWidget);
 
     // 松手时还没滑够，弹回原位。
     await gesture.up();
@@ -461,9 +462,10 @@ void main() {
 
       await tester.fling(_deck, const Offset(0, -200), 3000);
       await tester.pumpAndSettle();
-      await tester.fling(_deck, const Offset(0, 200), 3000);
+      // 右滑保留；下滑现在会变成撤销，牌堆走不完。
+      await tester.fling(_deck, const Offset(250, 0), 3000);
       await tester.pumpAndSettle();
-      await tester.fling(_deck, const Offset(0, 200), 3000);
+      await tester.fling(_deck, const Offset(250, 0), 3000);
       await tester.pumpAndSettle();
 
       await tester.tap(find.byKey(const Key('swipe-delete-all')));

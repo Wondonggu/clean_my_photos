@@ -166,10 +166,23 @@ void main() {
   });
 
   group('作用域键', () {
-    test('三种作用域互不相同', () {
+    test('各种作用域互不相同', () {
       expect(CleanupScopes.timeline, 'timeline');
       expect(CleanupScopes.album('a1'), 'album:a1');
       expect(CleanupScopes.category('screenshots'), 'category:screenshots');
+    });
+
+    test('月份作用域把月份补成两位', () {
+      expect(CleanupScopes.month(DateTime(2024, 5)), 'timeline:2024-05');
+      expect(CleanupScopes.month(DateTime(2024, 12)), 'timeline:2024-12');
+      expect(CleanupScopes.month(DateTime(2024, 1, 28)), 'timeline:2024-01');
+    });
+
+    test('月份作用域与整条时间线不撞车', () {
+      expect(CleanupScopes.month(DateTime(2024, 5)),
+          isNot(CleanupScopes.timeline));
+      expect(CleanupScopes.month(DateTime(2024, 5)),
+          isNot(CleanupScopes.month(DateTime(2024, 6))));
     });
   });
 }

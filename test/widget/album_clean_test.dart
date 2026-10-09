@@ -38,11 +38,13 @@ Future<void> _openAlbum(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
-/// 把当前这张往上甩（标记删除）或往下甩（标记保留）。
+/// 把当前这张往上甩（标记删除）或往右甩（标记保留）。
+///
+/// 保留走的是右滑：下滑现在是撤销，用它会把上一步撤回来。
 Future<void> _swipe(WidgetTester tester, {required bool deleteIt}) async {
   await tester.fling(
     find.byKey(const Key('swipe-deck')),
-    Offset(0, deleteIt ? -400 : 400),
+    deleteIt ? const Offset(0, -400) : const Offset(250, 0),
     3000,
   );
   await tester.pumpAndSettle();
@@ -89,7 +91,7 @@ void main() {
     expect(find.byType(MediaThumbnail), findsNWidgets(3));
 
     await _openSwipe(tester);
-    // 上滑标记删除、下滑标记保留；三张都过完一遍才会出现确认按钮。
+    // 上滑标记删除、右滑标记保留；三张都过完一遍才会出现确认按钮。
     await _swipe(tester, deleteIt: true);
     await _swipe(tester, deleteIt: false);
     await _swipe(tester, deleteIt: true);

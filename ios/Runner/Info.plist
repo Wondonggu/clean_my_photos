@@ -28,6 +28,14 @@
 	<string>需要读取你的照片和视频，才能找出重复、相似、截图和模糊的内容。所有分析都在本机完成，照片不会上传到任何服务器。</string>
 	<key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>
 	<true/>
+	<!-- iOS 26 起采用 UIScene 生命周期。
+	     只声明单场景：不写 UISceneConfigurations，由 UIKit 用 AppDelegate 的
+	     window 建默认配置，因此 AppDelegate.swift 不需要改动。 -->
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+	</dict>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

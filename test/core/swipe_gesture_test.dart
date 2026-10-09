@@ -65,10 +65,16 @@ void main() {
       expect(settle(state), SwipeVerdict.delete);
     });
 
-    test('下滑够远就是保留', () {
-      final state = SwipeGestureState.idle.dragBy(0, 200);
+    test('右滑够远就是保留', () {
+      // 保留的判定线是宽度的 22%（390 × 0.22 ≈ 86），比删除的 186 短得多。
+      expect(settle(SwipeGestureState.idle.dragBy(200, 0)), SwipeVerdict.keep);
+    });
 
-      expect(settle(state), SwipeVerdict.keep);
+    test('下滑够远就是撤销', () {
+      // 撤销的线是 844 × 0.30 ≈ 253，比它撤销的删除还远——撤回来是要下
+      // 决心的动作，不该被误触。
+      expect(settle(SwipeGestureState.idle.dragBy(0, 300)), SwipeVerdict.undo);
+      expect(settle(SwipeGestureState.idle.dragBy(0, 200)), isNull);
     });
 
     test('左滑够远才是撤销，差一点就弹回', () {
@@ -82,6 +88,7 @@ void main() {
     test('距离不够就弹回', () {
       expect(settle(SwipeGestureState.idle.dragBy(0, -100)), isNull);
       expect(settle(SwipeGestureState.idle.dragBy(0, 100)), isNull);
+      expect(settle(SwipeGestureState.idle.dragBy(60, 0)), isNull);
     });
 
     test('甩得够快就不必滑够距离', () {
@@ -89,12 +96,15 @@ void main() {
 
       expect(settle(short), isNull);
       expect(settle(short, velocityY: -2000), SwipeVerdict.delete);
-      expect(settle(short, velocityY: 2000), SwipeVerdict.keep);
+      // 往上拖了一小段又反手快速甩回来：这是反悔，干脆的甩动说了算。
+      expect(settle(short, velocityY: 2000), SwipeVerdict.undo);
     });
 
     test('还没锁轴就被甩出去时，由速度定轴', () {
       expect(settle(SwipeGestureState.idle, velocityY: -1500), SwipeVerdict.delete);
+      expect(settle(SwipeGestureState.idle, velocityY: 1500), SwipeVerdict.undo);
       expect(settle(SwipeGestureState.idle, velocityX: -1500), SwipeVerdict.undo);
+      expect(settle(SwipeGestureState.idle, velocityX: 1500), SwipeVerdict.keep);
     });
 
     test('什么都没动就松手，不给结论', () {
@@ -109,19 +119,21 @@ void main() {
     });
   });
 
-  group('右滑阻尼', () {
-    test('右滑同样距离只跟一点点', () {
+  group('右滑保留', () {
+    test('右滑跟手，不打折', () {
       final state = SwipeGestureState.idle.dragBy(100, 0);
 
       expect(state.axis, SwipeAxis.horizontal);
-      expect(state.offsetX, 100 * SwipeGestureState.resistance);
-      expect(state.intent, isNull);
+      expect(state.offsetX, 100);
+      expect(state.direction, SwipeDirection.right);
+      expect(state.intent, SwipeVerdict.keep);
     });
 
-    test('右滑甩得再快也弹回，不会误触发撤销', () {
-      final state = SwipeGestureState.idle.dragBy(300, 0);
+    test('右滑甩得够快也判定为保留', () {
+      final state = SwipeGestureState.idle.dragBy(20, 0);
 
-      expect(settle(state, velocityX: 9000), isNull);
+      expect(settle(state), isNull);
+      expect(settle(state, velocityX: 9000), SwipeVerdict.keep);
     });
 
     test('左滑跟手不打折', () {
@@ -154,8 +166,16 @@ void main() {
 
     test('拖动过程中就有徽标，不用等到松手', () {
       expect(SwipeGestureState.idle.dragBy(0, -20).intent, SwipeVerdict.delete);
-      expect(SwipeGestureState.idle.dragBy(0, 20).intent, SwipeVerdict.keep);
+      expect(SwipeGestureState.idle.dragBy(0, 20).intent, SwipeVerdict.undo);
       expect(SwipeGestureState.idle.dragBy(-20, 0).intent, SwipeVerdict.undo);
+      expect(SwipeGestureState.idle.dragBy(20, 0).intent, SwipeVerdict.keep);
+    });
+
+    test('方向各自独立，与结论多对一的关系分开', () {
+      expect(SwipeGestureState.idle.dragBy(0, -20).direction, SwipeDirection.up);
+      expect(SwipeGestureState.idle.dragBy(0, 20).direction, SwipeDirection.down);
+      expect(SwipeGestureState.idle.dragBy(-20, 0).direction, SwipeDirection.left);
+      expect(SwipeGestureState.idle.dragBy(20, 0).direction, SwipeDirection.right);
     });
   });
 

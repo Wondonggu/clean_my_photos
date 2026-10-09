@@ -3,12 +3,16 @@ description: "相册清理 — 一个帮助你快速找出重复、相似、模�
 publish_to: 'none'
 
 # version 的格式为 <major>.<minor>.<patch>+<build>。
-# iOS: CFBundleShortVersionString=1.0.0 / CFBundleVersion=1
-# Android: versionName=1.0.0 / versionCode=1
-version: 1.0.0+1
+# iOS: CFBundleShortVersionString=0.3.0 / CFBundleVersion=3
+# Android: versionName=0.3.0 / versionCode=3
+version: 0.3.0+3
 
+# Flutter 3.47.2 自带 Dart 3.13.2。下界取 3.11.0 而不是 3.13：那正是 Flutter
+# 框架自己的 `packages/flutter/pubspec.yaml` 写的 `sdk: ^3.11.0-0`，跟着它走
+# 就永远不会比框架允许的更严。本地和 Codemagic 都用 3.47.2，写在这里是为了
+# 哪天又在一台装了老 SDK 的机器上编出一堆看不懂的错误时能一眼看出原因。
 environment:
-  sdk: '>=3.2.0 <4.0.0'
+  sdk: '>=3.11.0 <4.0.0'
 
 dependencies:
   flutter:

@@ -12,21 +12,41 @@ import '../helpers/fake_repository.dart';
 import '../helpers/media_fixtures.dart';
 import '../helpers/surface.dart';
 
-/// 三天里的五张照片，时间从新到旧。
+/// 三个月里的五张照片，时间从新到旧。
+///
+/// 刻意跨三个月：按月分段之后，全落在一个月里的夹具会塌成一段，
+/// 分组本身就没得测了。
 List<MediaItem> _library() {
-  final day1 = DateTime(2024, 5, 3, 12);
-  final day2 = DateTime(2024, 5, 2, 12);
-  final day3 = DateTime(2024, 5, 1, 12);
+  final may = DateTime(2024, 5, 3, 12);
+  final apr = DateTime(2024, 4, 20, 12);
+  final mar = DateTime(2024, 3, 8, 12);
   return <MediaItem>[
-    MediaFixtures.photo(id: 'a', createdAt: day1),
-    MediaFixtures.photo(id: 'b', createdAt: day1.subtract(const Duration(hours: 2))),
-    MediaFixtures.photo(id: 'c', createdAt: day2),
-    MediaFixtures.photo(id: 'd', createdAt: day3),
-    MediaFixtures.photo(id: 'e', createdAt: day3.subtract(const Duration(hours: 1))),
+    MediaFixtures.photo(id: 'a', createdAt: may),
+    MediaFixtures.photo(id: 'b', createdAt: may.subtract(const Duration(days: 1))),
+    MediaFixtures.photo(id: 'c', createdAt: apr),
+    MediaFixtures.photo(id: 'd', createdAt: mar),
+    MediaFixtures.photo(id: 'e', createdAt: mar.subtract(const Duration(days: 1))),
   ];
 }
 
-/// 往存档里塞一条进度，模拟「上次没清完就退出了」。
+/// 12 个月、每月三张，总量超过一屏。用来验证滚动时表头不会堆在顶上。
+List<MediaItem> _yearOfPhotos() {
+  final items = <MediaItem>[];
+  for (var month = 1; month <= 12; month++) {
+    for (var i = 0; i < 3; i++) {
+      items.add(
+        MediaFixtures.photo(
+          id: 'm$month-$i',
+          createdAt: DateTime(2024, month, 10 - i, 12),
+        ),
+      );
+    }
+  }
+  // 时间倒序：新的月份在前。
+  return items.reversed.toList();
+}
+
+/// 往存档里塞一条整条时间线的进度，模拟「上次没清完就退出了」。
 void _seedProgress({
   required String anchorId,
   DateTime? anchorDate,
@@ -57,6 +77,15 @@ Future<void> _openTimeline(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+/// 点开某个月表头上的「滑动清理」。
+///
+/// `.last` 是最后一段的表头：Scaffold 先放 body 再放 AppBar，
+/// 所以 AppBar 上那个整条时间线的入口反而排在最后。
+Future<void> _openLastMonth(WidgetTester tester) async {
+  await tester.tap(find.byTooltip('滑动清理这个月').last);
+  await tester.pumpAndSettle();
+}
+
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues(<String, Object>{
@@ -65,7 +94,7 @@ void main() {
     MediaFixtures.reset();
   });
 
-  testWidgets('按自然日分段，表头是日期而不是时刻', (tester) async {
+  testWidgets('按月分段，表头是月份而不是日期', (tester) async {
     useLargeSurface(tester);
 
     await tester.pumpWidget(
@@ -74,13 +103,34 @@ void main() {
     await tester.pumpAndSettle();
     await _openTimeline(tester);
 
-    expect(find.text('2024 年 5 月 3 日'), findsOneWidget);
-    expect(find.text('2024 年 5 月 2 日'), findsOneWidget);
-    expect(find.text('2024 年 5 月 1 日'), findsOneWidget);
-    // 5 月 3 日和 5 月 1 日各两张，5 月 2 日一张。
+    expect(find.text('2024 年 5 月'), findsOneWidget);
+    expect(find.text('2024 年 4 月'), findsOneWidget);
+    expect(find.text('2024 年 3 月'), findsOneWidget);
+    // 5 月和 3 月各两张，4 月一张。
     expect(find.text('2 项'), findsNWidgets(2));
     expect(find.text('1 项'), findsOneWidget);
     expect(find.byType(MediaThumbnail), findsNWidgets(5));
+  });
+
+  testWidgets('表头不再吸顶，滚过去的月份不会一直堆在顶上', (tester) async {
+    useLargeSurface(tester);
+
+    await tester.pumpWidget(
+      CleanMyPhotosApp(repository: FakePhotoRepository(items: _yearOfPhotos())),
+    );
+    await tester.pumpAndSettle();
+    await _openTimeline(tester);
+
+    expect(find.text('2024 年 12 月'), findsOneWidget);
+
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -500));
+    await tester.pumpAndSettle();
+
+    // 回归用例：表头曾经是 `pinned: true`，每个月都钉在视口顶部，滚过去
+    // 几个月就叠成一片，把后面的内容全盖住。现在它们跟着内容一起滚走。
+    expect(find.text('2024 年 12 月'), findsNothing);
+    expect(find.text('2024 年 11 月'), findsNothing);
+    expect(find.text('2024 年 10 月'), findsOneWidget);
   });
 
   testWidgets('没有进度时不显示横幅', (tester) async {
@@ -100,7 +150,7 @@ void main() {
     useLargeSurface(tester);
     _seedProgress(
       anchorId: 'c',
-      anchorDate: DateTime(2024, 5, 2, 12),
+      anchorDate: DateTime(2024, 4, 20, 12),
       roundStartDate: DateTime(2024, 5, 3, 12),
     );
 
@@ -112,7 +162,7 @@ void main() {
 
     expect(
       find.text(
-        '上次清理到 2024 年 5 月 2 日 · 已处理 2 张 · 已删除 1 项 · 释放 3 MB',
+        '上次清理到 2024 年 4 月 20 日 · 已处理 2 张 · 已删除 1 项 · 释放 3 MB',
       ),
       findsOneWidget,
     );
@@ -121,7 +171,7 @@ void main() {
 
   testWidgets('继续清理直接从断点那张开始，不用重看一遍', (tester) async {
     useLargeSurface(tester);
-    _seedProgress(anchorId: 'c', anchorDate: DateTime(2024, 5, 2, 12));
+    _seedProgress(anchorId: 'c', anchorDate: DateTime(2024, 4, 20, 12));
 
     await tester.pumpWidget(
       CleanMyPhotosApp(repository: FakePhotoRepository(items: _library())),
@@ -139,7 +189,7 @@ void main() {
   testWidgets('断点那张已经被删掉时，退回到日期水位继续', (tester) async {
     useLargeSurface(tester);
     // 锚点 c 在存档里，但这次读回来的列表里已经没有它了。
-    _seedProgress(anchorId: 'c', anchorDate: DateTime(2024, 5, 2, 12));
+    _seedProgress(anchorId: 'c', anchorDate: DateTime(2024, 4, 20, 12));
 
     await tester.pumpWidget(
       CleanMyPhotosApp(
@@ -154,13 +204,13 @@ void main() {
     await tester.tap(find.text('继续清理'));
     await tester.pumpAndSettle();
 
-    // 下一个比 5 月 2 日更老的是 d。
+    // 下一个比 4 月 20 日更老的是 d。
     expect(find.byKey(const Key('swipe-card-d')), findsOneWidget);
   });
 
   testWidgets('重新开始会清掉进度，横幅随之消失', (tester) async {
     useLargeSurface(tester);
-    _seedProgress(anchorId: 'c', anchorDate: DateTime(2024, 5, 2, 12));
+    _seedProgress(anchorId: 'c', anchorDate: DateTime(2024, 4, 20, 12));
 
     await tester.pumpWidget(
       CleanMyPhotosApp(repository: FakePhotoRepository(items: _library())),
@@ -184,7 +234,7 @@ void main() {
     useLargeSurface(tester);
     _seedProgress(
       anchorId: 'c',
-      anchorDate: DateTime(2024, 5, 2, 12),
+      anchorDate: DateTime(2024, 4, 20, 12),
       roundStartDate: DateTime(2024, 5, 3, 12),
     );
 
@@ -200,7 +250,6 @@ void main() {
     await _openTimeline(tester);
 
     expect(find.textContaining('有 1 张照片是这一轮开始之后才出现的'), findsOneWidget);
-    expect(find.text('2024 年 5 月 4 日'), findsOneWidget);
 
     await tester.tap(find.text('从头看一遍'));
     await tester.pumpAndSettle();
@@ -209,7 +258,7 @@ void main() {
     expect(find.textContaining('上次清理到'), findsNothing);
   });
 
-  testWidgets('时间线上删掉的照片会立刻从网格里消失', (tester) async {
+  testWidgets('整条时间线上删掉的照片会立刻从网格里消失', (tester) async {
     useLargeSurface(tester);
     final repository = FakePhotoRepository(items: _library());
 
@@ -219,15 +268,10 @@ void main() {
 
     expect(find.byType(MediaThumbnail), findsNWidgets(5));
 
-    // 从 5 月 1 日那一段进滑动清理，删掉 d。
-    //
-    // 这里的 `.last` 是「最后一段的表头」：Scaffold 先放 body 再放 AppBar，
-    // 所以 AppBar 上那个整条时间线的入口反而排在最后。
-    await tester.tap(find.byTooltip('滑动清理这一天').last);
-    await tester.pumpAndSettle();
+    // 从 3 月那一段进滑动清理，删掉 d、e 两张。
+    await _openLastMonth(tester);
     expect(find.byKey(const Key('swipe-card-d')), findsOneWidget);
 
-    // 这一天有两张，两张都删掉。
     for (var i = 0; i < 2; i++) {
       await tester.fling(
         find.byKey(const Key('swipe-deck')),
@@ -250,6 +294,43 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(MediaThumbnail), findsNWidgets(3));
-    expect(find.text('2024 年 5 月 1 日'), findsNothing);
+    expect(find.text('2024 年 3 月'), findsNothing);
+  });
+
+  testWidgets('从某个月进去清理，断点记在那个月身上', (tester) async {
+    useLargeSurface(tester);
+    const store = PreferencesCleanupProgressStore();
+
+    await tester.pumpWidget(
+      CleanMyPhotosApp(repository: FakePhotoRepository(items: _library())),
+    );
+    await tester.pumpAndSettle();
+    await _openTimeline(tester);
+
+    // 3 月有 d、e 两张，过掉第一张就退出。
+    await _openLastMonth(tester);
+    expect(find.byKey(const Key('swipe-card-d')), findsOneWidget);
+    await tester.fling(
+      find.byKey(const Key('swipe-deck')),
+      const Offset(0, -400),
+      3000,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(BackButton));
+    await tester.pumpAndSettle();
+
+    // 断点记在月份自己的作用域下，而不是整条时间线。
+    final saved = await store.load();
+    expect(saved.keys, contains('timeline:2024-03'));
+    expect(saved['timeline:2024-03']!.anchorId, 'e');
+    expect(saved['timeline:2024-03']!.processed, 1);
+    expect(saved.containsKey('timeline'), isFalse);
+
+    // 表头上看得见这个月清到哪儿了。
+    expect(find.text('已处理 1'), findsOneWidget);
+
+    // 再进去直接落在断点那张上。
+    await _openLastMonth(tester);
+    expect(find.byKey(const Key('swipe-card-e')), findsOneWidget);
   });
 }

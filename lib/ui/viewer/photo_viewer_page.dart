@@ -10,6 +10,7 @@ import '../../data/asset_locator_channel.dart';
 import '../../data/photo_repository.dart';
 import '../../state/selection_controller.dart';
 import '../theme/app_theme.dart';
+import '../widgets/delete_flow.dart';
 import '../widgets/media_thumbnail.dart';
 
 /// 全屏查看单张照片，并就地切换「是否删除」。
@@ -20,21 +21,35 @@ import '../widgets/media_thumbnail.dart';
 /// 另外还会显示这张照片在系统「照片」App 里属于哪些相册——用户想确认
 /// 「这张删了会不会把某个相册清空」时，只能回到系统相册里一张张翻，
 /// 这里直接给出答案。
+///
+/// **从时间线或相册进来时，浏览本身就是一次清理**：查看器自己持有一份
+/// 勾选状态，退出前把标记过的照片统一确认删除。从复核页进来时不会——那
+/// 一页的候选是预先全选的，照此行事会把整个分类删光，见 [selection]。
 class PhotoViewerPage extends StatefulWidget {
   const PhotoViewerPage({
     super.key,
     required this.items,
     required this.initialIndex,
     required this.selection,
+    this.onDeleted,
   });
 
   final List<MediaItem> items;
   final int initialIndex;
 
-  /// 与复核页共享的勾选状态；为空时只做浏览。
+  /// 外部传入的勾选状态。
+  ///
+  /// 非空表示这次浏览是**某次复核的一部分**（候选由那一页决定，可能已经
+  /// 预选好了），查看器只负责就地切换，退出时不删除任何东西。
+  /// 为空则查看器自建一份空白勾选，退出即清理。
   ///
   /// 为空也会照常显示「所在相册」——纯浏览时反而更需要它。
   final SelectionController? selection;
+
+  /// 系统真的删掉这些 id 之后回调，方便调用方把列表里的对应条目去掉。
+  ///
+  /// 传的是**真正被删掉的** id，语义与 [SwipeCleanPage.onDeleted] 一致。
+  final ValueChanged<Set<String>>? onDeleted;
 
   @override
   State<PhotoViewerPage> createState() => _PhotoViewerPageState();
@@ -60,11 +75,28 @@ class _PhotoViewerPageState extends State<PhotoViewerPage> {
 
   bool _albumsExpanded = false;
 
+  /// 自己持有的勾选状态：只有浏览路径（没传 [PhotoViewerPage.selection]）才有。
+  ///
+  /// 空白起始——点一下才标记，退出时统一确认删除。
+  SelectionController? _owned;
+
+  /// 正在走「确认并离开」的流程，用来挡住返回键的连点。
+  bool _leaving = false;
+
+  /// 这次浏览是不是一次清理会话。
+  bool get _ownsCleanup => _owned != null;
+
+  /// 当前实际使用的勾选状态。
+  SelectionController? get _selection => _owned ?? widget.selection;
+
   @override
   void initState() {
     super.initState();
     _index = widget.initialIndex.clamp(0, widget.items.length - 1);
     _controller = PageController(initialPage: _index);
+    if (widget.selection == null) {
+      _owned = SelectionController()..reset(widget.items, selectAll: false);
+    }
     _loadLocation(_current);
   }
 
@@ -73,7 +105,34 @@ class _PhotoViewerPageState extends State<PhotoViewerPage> {
   @override
   void dispose() {
     _controller.dispose();
+    _owned?.dispose();
     super.dispose();
+  }
+
+  // -------------------------------------------------------------- 退出即清理
+
+  /// 退出前把标记过的照片统一确认删除。
+  ///
+  /// 用户在自己的确认弹窗里取消（[performDeletion] 返回 `null`）时**留在原地**：
+  /// 标记还在，下次返回再问一次，不当成「放弃清理」。
+  Future<void> _confirmAndLeave() async {
+    if (_leaving) return;
+    final controller = _owned;
+    if (controller == null || controller.isEmpty) return;
+
+    final items = controller.selectedItems;
+    _leaving = true;
+    try {
+      final result = await performDeletion(context, items);
+      if (!mounted) return;
+      // 用户取消：留在查看器里，标记不丢。
+      if (result == null) return;
+
+      widget.onDeleted?.call(deletedIds(items, result));
+      Navigator.of(context).pop();
+    } finally {
+      _leaving = false;
+    }
   }
 
   // -------------------------------------------------------------- 高清与原图
@@ -128,10 +187,10 @@ class _PhotoViewerPageState extends State<PhotoViewerPage> {
 
   @override
   Widget build(BuildContext context) {
-    final selection = widget.selection;
+    final selection = _selection;
     final item = _current;
 
-    return Scaffold(
+    final scaffold = Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.black,
@@ -170,6 +229,7 @@ class _PhotoViewerPageState extends State<PhotoViewerPage> {
           _InfoBar(
             item: item,
             selection: selection,
+            ownsCleanup: _ownsCleanup,
             location: _location,
             loadingLocation: _locationLoadingId != null,
             albumsExpanded: _albumsExpanded,
@@ -177,6 +237,22 @@ class _PhotoViewerPageState extends State<PhotoViewerPage> {
                 setState(() => _albumsExpanded = !_albumsExpanded),
           ),
         ],
+      ),
+    );
+
+    // 没接过清理任务时（复核页那条路）原样返回，退出行为一个字节都不变。
+    if (!_ownsCleanup) return scaffold;
+
+    // `canPop` 得跟着标记数实时变：一直挂着 `false` 会把 iOS 的边缘侧滑
+    // 返回在整个浏览会话里都关掉。没标记时放行，省掉一次多余的确认。
+    return ListenableBuilder(
+      listenable: _owned!,
+      builder: (context, _) => PopScope(
+        canPop: _owned!.isEmpty,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) unawaited(_confirmAndLeave());
+        },
+        child: scaffold,
       ),
     );
   }
@@ -327,6 +403,7 @@ class _InfoBar extends StatelessWidget {
   const _InfoBar({
     required this.item,
     required this.selection,
+    required this.ownsCleanup,
     required this.location,
     required this.loadingLocation,
     required this.albumsExpanded,
@@ -335,6 +412,10 @@ class _InfoBar extends StatelessWidget {
 
   final MediaItem item;
   final SelectionController? selection;
+
+  /// 这次浏览是不是一次清理会话（退出时会统一确认删除）。
+  final bool ownsCleanup;
+
   final AssetLocation? location;
   final bool loadingLocation;
   final bool albumsExpanded;
@@ -418,6 +499,22 @@ class _InfoBar extends StatelessWidget {
                   child: Text(
                     '收藏的照片不会被清理',
                     style: TextStyle(color: Colors.white38, fontSize: 12),
+                  ),
+                ),
+              // 浏览即清理：说清楚「标记了会怎样」，否则用户退出时会被
+              // 突然冒出来的删除确认吓一跳。
+              if (ownsCleanup && controller != null)
+                ListenableBuilder(
+                  listenable: controller,
+                  builder: (context, _) => Padding(
+                    key: const Key('viewer-cleanup-hint'),
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      controller.count == 0
+                          ? '点照片即可标记为删除，退出时会统一确认'
+                          : '退出时会提示删除已标记的 ${controller.count} 项',
+                      style: const TextStyle(color: Colors.white38, fontSize: 12),
+                    ),
                   ),
                 ),
             ],

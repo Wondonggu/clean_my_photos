@@ -1,6 +1,7 @@
 # 相册清理（Clean My Photos）
 
-用 Flutter 写的 iOS 相册清理工具，目标系统 **iOS 15.5 及以上**。
+用 Flutter 写的 iOS 相册清理工具，目标系统 **iOS 15.5 及以上**，
+并已适配 iOS 26（采用 UIScene 生命周期，见下）。
 
 它会扫描系统相册，找出**重复照片、相似照片、截图、屏幕录制、模糊照片、超大视频/照片**，
 给出「保留哪一张、删掉哪些」的建议，确认后调用系统相册接口批量删除。
@@ -13,9 +14,13 @@
 清理有两条路：
 
 - **按问题清**（首页那几个分类）：重复、相似、截图……回答的是「清什么」；
-- **按时间清**（右上角「时间线」与「相册」）：按自然日分段或整本相册翻着清，
-  回答的是「什么时候拍的」。两条路都走同一套手势——**上滑删除、下滑保留、
-  左滑撤销**，滑到底之后再一次性确认。中途退出会记下落点，下次进来接着清。
+- **按时间清**（右上角「时间线」与「相册」）：按月份分段或整本相册翻着清，
+  回答的是「什么时候拍的」。两条路都走同一套手势——**上滑删除、右滑保留、
+  下滑或左滑撤销**，滑到底之后再一次性确认。中途退出会记下落点，下次进来接着清。
+
+浏览照片本身也是一次清理：从时间线或相册点开一张全屏照片，顺手标记几张，
+**退出时统一确认删除**。只有从「分类复核页」进去时例外——那一页的候选是
+预先全选的，退出即删会把整个分类清空。
 
 ---
 
@@ -45,9 +50,9 @@ lib/
   ui/                   界面
     home/               首页（相册概况 + 各分类入口）
     review/             分类复核页、照片网格、重复照片分组
-    swipe/              滑动清理（上滑删、下滑留、左滑撤销）
-    viewer/             全屏查看器（可缩放，显示照片的相册归属）
-    browse/             时间线（按自然日分段，可整条或逐日清理）
+    swipe/              滑动清理（上滑删、右滑留、下滑或左滑撤销）
+    viewer/             全屏查看器（可缩放，显示相册归属；退出即清理）
+    browse/             时间线（按月份分段，可整条或逐月清理）
     albums/             相册浏览与整本清理
     settings/           设置
     permission/         权限引导
@@ -68,6 +73,11 @@ test/
 ## 在 Ubuntu 上开发
 
 本机不需要 macOS，也不需要 Android SDK：界面逻辑全部可以用假数据测试。
+
+本地 Flutter 用 **3.47.2**，和 `codemagic.yaml` 里跑的两个工作流完全一致。
+版本对不上会在 `flutter analyze` 上先炸：查看器的退出拦截用了 3.24 才有的
+`PopScope.onPopInvokedWithResult`，旧的 `onPopInvoked` 在 3.24 起已废弃，
+而 `flutter analyze` 一有告警就返回非零，Codemagic 的构建会直接失败。
 
 ```bash
 flutter pub get
@@ -112,7 +122,7 @@ iOS 的编译、签名与上传全部交给 Codemagic（见下）。
    并把它的数字 Apple ID 填到 `environment.vars.APP_STORE_APP_ID`。
    没填（保持 `0`）也能打 ipa，只是构建号会退化成用 Codemagic 的流水号。
 
-之后打一个 `v1.0.0` 这样的 tag 就会自动出包并上传 TestFlight。
+之后打一个 `v0.3.0` 这样的 tag 就会自动出包并上传 TestFlight。
 
 ---
 
@@ -134,6 +144,15 @@ iOS 的编译、签名与上传全部交给 Codemagic（见下）。
 
 `codemagic.yaml` 的两个工作流都会在构建后读产物里的 `MinimumOSVersion`，
 对不上就直接让构建失败——避免哪天被误改回 11.0 却没人发现。
+
+### iOS 26
+
+部署目标没有变，只补了生命周期：`Info.plist` 里加了 `UIApplicationSceneManifest`，
+声明单场景（`UIApplicationSupportsMultipleScenes = false`），
+让 App 在 iOS 26 上走 UIScene 生命周期而不是已经废弃的那条老路。
+刻意**不写** `UISceneConfigurations`——由 UIKit 用 `AppDelegate` 的 window
+建默认配置，`AppDelegate.swift` 因此一个字都不用改，两条 MethodChannel
+（`clean_my_photos/asset_locator`、`clean_my_photos/background_task`）原样保留。
 
 ### 权限文案
 
@@ -211,8 +230,9 @@ iOS 的编译、签名与上传全部交给 Codemagic（见下）。
 - **断点会跳过新照片**：清理进度按「下一张要看的」记，而列表是时间倒序的，
   所以断点之后新拍的照片落在断点上方，这一轮看不到。时间线会显式提示有多少张，
   并提供「从头看一遍」。
-- **单日清理不记进度**：从时间线的某一天进去清理不写存档——一天的量有限，
-  走完就走完了，记下来只会攒出一堆再也用不到的作用域。
+- **断点按月记**：时间线按月分段，从某个月进去清理会把落点记在
+  `timeline:YYYY-MM` 这个作用域下，表头会显示「已处理 N 张」。
+  时间未知的那一组不记进度，量小且没有稳定的时间轴可用。
 - **「所在相册」只在 iOS 上有**：反查照片属于哪些相册要用 PhotoKit 的
   `fetchAssetCollectionsContaining`，`photo_manager` 没有这个方向，所以走的是
   `ios/Runner/AppDelegate.swift` 里的原生通道。Android 上按目录名只能猜个大概，
