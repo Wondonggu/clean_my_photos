@@ -2,33 +2,41 @@ import UIKit
 import Flutter
 import Photos
 
-@UIApplicationMain
-@objc class AppDelegate: FlutterAppDelegate {
+@main
+@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    GeneratedPluginRegistrant.register(with: self)
+    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
 
-    if let controller = window?.rootViewController as? FlutterViewController {
-      let messenger = controller.binaryMessenger
+  /// 引擎建好之后再挂插件和通道。
+  ///
+  /// 以前这两件事都在 `didFinishLaunchingWithOptions` 里做，靠 `window?.rootViewController`
+  /// 拿 messenger——那是在 AppDelegate 自己持有 window 的年代。UIScene 下 window 归
+  /// `FlutterSceneDelegate` 管，storyboard 的 `FlutterViewController` 建出来的是「隐式引擎」，
+  /// 时机在 `didFinishLaunchingWithOptions` 之后，所以改成等这个回调。
+  ///
+  /// 注意：`@UIApplicationMain` 一并换成了 `@main`——UIScene 下前者已不适用。
+  func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
+    GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
 
-      FlutterMethodChannel(
-        name: "clean_my_photos/asset_locator",
-        binaryMessenger: messenger
-      ).setMethodCallHandler { call, result in
-        AssetLocator.handle(call, result: result)
-      }
+    let messenger = engineBridge.applicationRegistrar.messenger()
 
-      FlutterMethodChannel(
-        name: "clean_my_photos/background_task",
-        binaryMessenger: messenger
-      ).setMethodCallHandler { call, result in
-        BackgroundTaskBridge.handle(call, result: result)
-      }
+    FlutterMethodChannel(
+      name: "clean_my_photos/asset_locator",
+      binaryMessenger: messenger
+    ).setMethodCallHandler { call, result in
+      AssetLocator.handle(call, result: result)
     }
 
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    FlutterMethodChannel(
+      name: "clean_my_photos/background_task",
+      binaryMessenger: messenger
+    ).setMethodCallHandler { call, result in
+      BackgroundTaskBridge.handle(call, result: result)
+    }
   }
 }
 

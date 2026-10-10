@@ -29,12 +29,41 @@
 	<key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>
 	<true/>
 	<!-- iOS 26 起采用 UIScene 生命周期。
-	     只声明单场景：不写 UISceneConfigurations，由 UIKit 用 AppDelegate 的
-	     window 建默认配置，因此 AppDelegate.swift 不需要改动。 -->
+
+	     指到引擎自带的 `FlutterSceneDelegate` 而不是随工程新建一个
+	     `SceneDelegate.swift`——那个类要新增文件，就得手改 project.pbxproj 的
+	     四处，理由和 AppDelegate.swift 里 AssetLocator 那段注释一样。
+
+	     它干的事正是这趟迁移的关键：老式 AppDelegate 由 Main.storyboard 建出
+	     window，而 UIScene 下 window 归 scene 管，`FlutterSceneDelegate` 负责把
+	     storyboard 那个 rootViewController 搬进 scene 的 window 里。
+	     缺了 UISceneConfigurations 就没有这个搬运工，window 是空的，
+	     `AppDelegate` 里挂在 `window?.rootViewController` 上的 MethodChannel
+	     会静默装不上去。
+
+	     注意别只写半截：flutter_tools 判断「迁没迁过」只看这个文件里有没有
+	     UIApplicationSceneManifest 这个字符串，写了空壳它就认为迁完了，
+	     既不警告也不补救。 -->
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
 		<false/>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>UIWindowSceneSessionRoleApplication</key>
+			<array>
+				<dict>
+					<key>UISceneClassName</key>
+					<string>UIWindowScene</string>
+					<key>UISceneConfigurationName</key>
+					<string>flutter</string>
+					<key>UISceneDelegateClassName</key>
+					<string>FlutterSceneDelegate</string>
+					<key>UISceneStoryboardFile</key>
+					<string>Main</string>
+				</dict>
+			</array>
+		</dict>
 	</dict>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>

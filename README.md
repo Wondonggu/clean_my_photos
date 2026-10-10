@@ -147,12 +147,30 @@ iOS 的编译、签名与上传全部交给 Codemagic（见下）。
 
 ### iOS 26
 
-部署目标没有变，只补了生命周期：`Info.plist` 里加了 `UIApplicationSceneManifest`，
-声明单场景（`UIApplicationSupportsMultipleScenes = false`），
-让 App 在 iOS 26 上走 UIScene 生命周期而不是已经废弃的那条老路。
-刻意**不写** `UISceneConfigurations`——由 UIKit 用 `AppDelegate` 的 window
-建默认配置，`AppDelegate.swift` 因此一个字都不用改，两条 MethodChannel
-（`clean_my_photos/asset_locator`、`clean_my_photos/background_task`）原样保留。
+部署目标没有变（还是 15.5），只补了生命周期，让 App 在 iOS 26 上走 UIScene
+而不是已经废弃的那条老路。两处改动：
+
+`ios/Runner/Info.plist` 里 `UIApplicationSceneManifest` 声明单场景，并把
+`UISceneDelegateClassName` 指到引擎自带的 `FlutterSceneDelegate`
+（`FlutterSceneDelegate.h` 的注释就写着「typically specified as the UISceneDelegate
+in the Info.plist」）。**必须**带 `UISceneConfigurations`：UIScene 下 window 归
+scene 管，而 `Main.storyboard` 建出来的 `FlutterViewController` 得靠
+`FlutterSceneDelegate` 搬进 scene 的 window 里，`FlutterAppDelegate` 自己并不
+实现 `application(_:configurationForConnecting:options:)`，没有那条退路。
+
+`ios/Runner/AppDelegate.swift` 跟着从 `@UIApplicationMain` 换成 `@main`，并实现
+`FlutterImplicitEngineDelegate`：插件注册和两条 MethodChannel
+（`clean_my_photos/asset_locator`、`clean_my_photos/background_task`）都从
+`didFinishLaunchingWithOptions` 挪进 `didInitializeImplicitFlutterEngine(_:)`，
+messenger 从 `engineBridge.applicationRegistrar` 取。以前那条路靠
+`window?.rootViewController` 拿 messenger，在 UIScene 下是空的，通道会静默装不上。
+
+⚠️ 别只写半截：`flutter_tools` 判断「迁没迁过」只看 Info.plist 里有没有
+`UIApplicationSceneManifest` 这个字符串，写了空壳它就认为迁完了，既不警告也不
+自动补救（`flutter_tools/lib/src/migrations/uiscene_migration.dart`）。
+
+这一段本机验不了（Linux 上没有 Xcode），只能靠 Codemagic 的 `ios-unsigned-check`
+（`pub get → analyze → test → flutter build ios --no-codesign`）兜底。
 
 ### 权限文案
 
