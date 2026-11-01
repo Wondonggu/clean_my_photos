@@ -7,7 +7,7 @@
 # 部署目标必须与 Xcode 工程里的 IPHONEOS_DEPLOYMENT_TARGET、
 # AppFrameworkInfo.plist 的 MinimumOSVersion 保持一致，
 # 否则 CocoaPods 会报「deployment target 低于依赖要求」。
-platform :ios, '15.5'
+platform :ios, '26.5'
 
 # CocoaPods 默认会在安装时同步上报统计信息，会明显拖慢安装速度。
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'

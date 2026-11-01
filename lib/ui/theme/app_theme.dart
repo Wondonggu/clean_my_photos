@@ -51,7 +51,7 @@ class AppTheme {
       // 用 `InkRipple` 而不是 Material 3 默认的 `InkSparkle`。
       //
       // `InkSparkle` 需要加载并运行一段片元着色器（shaders/ink_sparkle.frag）：
-      // 一是首帧会多一次着色器编译，在 iOS 15.5 这类老设备上有可见的卡顿；
+      // 一是首帧会多一次着色器编译，在低端设备上有可见的卡顿；
       // 二是无 GPU 的 CI 环境里 `flutter test` 会因着色器无法通过运行时校验而
       // 直接抛异常，导致界面测试全红。水波纹是纯 Dart 实现，没有这些依赖。
       splashFactory: InkRipple.splashFactory,

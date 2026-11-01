@@ -1,7 +1,7 @@
 # 相册清理（Clean My Photos）
 
-用 Flutter 写的 iOS 相册清理工具，目标系统 **iOS 15.5 及以上**，
-并已适配 iOS 26（采用 UIScene 生命周期，见下）。
+用 Flutter 写的 iOS 相册清理工具，目标系统 **iOS 26.5 及以上**
+（在 iOS 26.6.1 设备上可正常安装运行），并已适配 iOS 26 的 UIScene 生命周期（见下）。
 
 它会扫描系统相册，找出**重复照片、相似照片、截图、屏幕录制、模糊照片、超大视频/照片**，
 给出「保留哪一张、删掉哪些」的建议，确认后调用系统相册接口批量删除。
@@ -96,20 +96,51 @@ iOS 的编译、签名与上传全部交给 Codemagic（见下）。
 
 ## 在 Codemagic 上构建 iOS
 
-仓库根目录的 [`codemagic.yaml`](codemagic.yaml) 定义了两个工作流：
+仓库根目录的 [`codemagic.yaml`](codemagic.yaml) 定义了三个工作流：
 
 | 工作流 | 用途 | 需要 Apple 账号 |
 | --- | --- | --- |
-| `ios-unsigned-check` | `pub get` → `analyze` → `test` → `flutter build ios --no-codesign`，并校验产物确实是 iOS 15.5 | 不需要 |
-| `ios-release` | 签名打包 ipa，上传 TestFlight（打 `v*` tag 时触发） | 需要 |
+| `ios-unsigned-check` | `pub get` → `analyze` → `test` → `flutter build ios --no-codesign`，并校验产物确实是 iOS 26.5 | 不需要 |
+| `ios-unsigned-ipa` | 只编译、不签名，产出可交给 Sideloadly/AltStore 重签的未签名 ipa（手动启动） | 免费 Apple ID |
+| `ios-release` | 签名打包 ipa，上传 TestFlight（打 `v*` tag 时触发） | 付费账号 |
 
 ### 1. 先跑通不需要签名的那条
 
 把仓库接到 Codemagic，直接跑 `ios-unsigned-check`。
-它会验证代码能编译、测试能过，并检查 `Runner.app` 的 `MinimumOSVersion` 就是 `15.5`
+它会验证代码能编译、测试能过，并检查 `Runner.app` 的 `MinimumOSVersion` 就是 `26.5`
 （`ios-release` 里也有一模一样的检查）。
 
-### 2. 配置签名（跑 `ios-release` 前）
+> ⚠️ 这个工作流的 `Runner.app` 是**未签名**的，只能用来验证编译，**不能装到真机**。
+> 真机安装看下一节。
+
+### 2. 只有免费 Apple ID：侧载到自己 iPhone
+
+免费 Apple ID 不能用 Codemagic 的自动签名，也不能用 TestFlight（TestFlight 属于
+付费的 Apple Developer Program）。免费账号唯一可行的方式是**在本机重签**：
+
+1. 在 Codemagic 里**手动启动** `ios-unsigned-ipa` 工作流（它不配 `triggering`），
+   下载产物 `clean_my_photos-unsigned.ipa`。
+2. 在 Windows 或 macOS 上用 [Sideloadly](https://sideloadly.io/) 或 AltStore，
+   登录你的 Apple ID，把这个 ipa 装到已经连上电脑的 iPhone 上。
+   工具会用你的个人团队证书重新签名，并自动把设备注册进描述文件。
+   - 首次安装前在 iPhone 上打开 **设置 → 隐私与安全性 → 开发者模式**；
+   - 装完在 **设置 → 通用 → VPN 与设备管理** 里信任你的 Apple ID 证书；
+   - 如果提示 Bundle ID 已被占用，在 Sideloadly 里换一个自定义 Bundle ID
+     （例如 `com.你的名字.cleanMyPhotos`）。
+3. 免费签名 **7 天过期**：到期 App 打不开，用同样方式重装一次即可。
+   免费账号同时最多 3 个自签 App，7 天内最多注册 10 个 App ID。
+
+> 直接把 `ios-unsigned-check` 的 `Runner.app`，或 `ios-release` 的 ipa 拖进手机，
+> 一定会报**“无法验证 App 完整性 / integrity could not be verified”**：
+> 前者根本没有签名，后者是 App Store 分发签名，只能在 TestFlight/App Store 里安装。
+> 必须经过 Sideloadly/AltStore（或 Xcode）用你自己的证书重签一次。
+>
+> 如果手头有 macOS，可以跳过 Codemagic：用 Xcode 打开 `ios/Runner.xcworkspace`，
+> 在 **Signing & Capabilities** 里选自己的 **Personal Team**，连上 iPhone 直接 Run。
+> 同样是 7 天有效。免费 Apple ID 的签名必须有一台能连 iPhone 的 Windows/macOS；
+> 只有 Linux 的话，只能改用付费账号 + TestFlight。
+
+### 3. 配置签名（付费账号，跑 `ios-release` 前）
 
 1. **App Store Connect API key**：App Store Connect → *用户和访问* → *集成* → *App Store Connect API*
    新建一个 **App Manager** 权限的 key，下载 `.p8`（只能下一次）。
@@ -126,29 +157,35 @@ iOS 的编译、签名与上传全部交给 Codemagic（见下）。
 
 ---
 
-## iOS 15.5 是怎么配的
+## iOS 26.5 是怎么配的
 
 四处必须保持一致，改一处要改全部：
 
 | 位置 | 值 |
 | --- | --- |
-| `ios/Runner.xcodeproj/project.pbxproj` 里的 `IPHONEOS_DEPLOYMENT_TARGET`（Debug/Release/Profile 三处） | `15.5` |
-| `ios/Flutter/AppFrameworkInfo.plist` 的 `MinimumOSVersion` | `15.5` |
-| `ios/Podfile` 的 `platform :ios` | `'15.5'` |
-| `codemagic.yaml` 里的一致性检查脚本 | `15.5` |
+| `ios/Runner.xcodeproj/project.pbxproj` 里的 `IPHONEOS_DEPLOYMENT_TARGET`（Debug/Release/Profile 三处） | `26.5` |
+| `ios/Flutter/AppFrameworkInfo.plist` 的 `MinimumOSVersion` | `26.5` |
+| `ios/Podfile` 的 `platform :ios` | `'26.5'` |
+| `codemagic.yaml` 里的一致性检查脚本 | `26.5` |
 
-为什么是 15.5 而不是更低：
+为什么是 26.5，而不是 26.6.1：
 
-- 目标机型是 iPhone 6s 及之后的设备，它们能升级到的最后一个大版本就是 iOS 15；
-- **Flutter 3.47 起最低支持 iOS 15**，再往下配也没有意义。
+- 本项目**不再兼容 iOS 15**，最低只支持 iOS 26.5；
+- CI 里的 **Xcode 26.6 内置的是 iOS 26.5 SDK**，26.5 是它能设置的最高部署目标。
+  直接在 Xcode 26.6 里把部署目标写成 26.6 或 26.6.1，会报
+  「deployment target 超出支持范围」，构建直接失败；
+- 产物在 iOS 26.5、26.6、26.6.1 及更高版本上都能安装运行，所以**支持 26.6.1+ 没有问题**；
+- 如果必须让 `MinimumOSVersion` 精确等于 `26.6.1`，需要把 CI 换到
+  Xcode 27（iOS 27 SDK，支持 15.0–27.0.x 的部署目标），并相应升级 Flutter
+  （3.47.4+ 才修掉 Xcode 27 下的几个已知问题），代价明显更大，目前没有这么做。
 
-`codemagic.yaml` 的两个工作流都会在构建后读产物里的 `MinimumOSVersion`，
-对不上就直接让构建失败——避免哪天被误改回 11.0 却没人发现。
+`codemagic.yaml` 的三个工作流都会在构建后读产物里的 `MinimumOSVersion`，
+对不上就直接让构建失败——避免哪天被误改回 15.5 这类旧值却没人发现。
 
 ### iOS 26
 
-部署目标没有变（还是 15.5），只补了生命周期，让 App 在 iOS 26 上走 UIScene
-而不是已经废弃的那条老路。两处改动：
+部署目标已经提高到 26.5（不再兼容 iOS 15），生命周期改为 UIScene：
+iOS 26 起 UIScene 是必须的，老式的「AppDelegate 自己持有 window」那条路已经废弃。两处改动：
 
 `ios/Runner/Info.plist` 里 `UIApplicationSceneManifest` 声明单场景，并把
 `UISceneDelegateClassName` 指到引擎自带的 `FlutterSceneDelegate`

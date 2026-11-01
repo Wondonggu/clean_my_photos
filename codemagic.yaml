@@ -4,8 +4,9 @@
 # 这里把「代码检查 → 编译 → 签名 → 上传 TestFlight」整条链路放到 Codemagic 的
 # macOS 构建机上，本地只负责写代码和跑不依赖平台的测试。
 #
-# 两个工作流：
-#   ios-unsigned-check —— 不需要任何 Apple 账号，推代码就能验证 iOS 15.5 配置没坏；
+# 三个工作流：
+#   ios-unsigned-check —— 不需要任何 Apple 账号，推代码就能验证 iOS 26.5 配置没坏；
+#   ios-unsigned-ipa   —— 产出未签名 ipa，供免费 Apple ID 用 Sideloadly/AltStore 侧载；
 #   ios-release        —— 需要先配好签名，产出可直接上 TestFlight 的 ipa。
 #
 # 使用前请在 Codemagic 团队设置里完成两项配置（详见 README「在 Codemagic 上构建 iOS」）：
@@ -15,14 +16,16 @@
 workflows:
   # ------------------------------------------------------------------
   # 不需要签名的编译检查：任何一次推送都能跑，用来保证 iOS 工程配置
-  # （尤其是 15.5 的部署目标）没有被改坏。
+  # （尤其是 26.5 的部署目标）没有被改坏。
   # ------------------------------------------------------------------
   ios-unsigned-check:
     name: iOS 编译检查（无需签名）
     instance_type: mac_mini_m2
     max_build_duration: 45
     environment:
-      # Flutter 3.47 起最低支持 iOS 15，正好与本项目的部署目标一致；
+      # 本项目只支持 iOS 26.5 及以上，不再兼容 iOS 15。
+      # Xcode 26.6 内置的是 iOS 26.5 SDK，26.5 是它能设置的最高部署目标；
+      # 产物装到 iOS 26.6.1 设备上没有问题。
       # 想跟随最新稳定版可以改成 `stable`。
       flutter: 3.47.2
       xcode: 26.6
@@ -30,7 +33,7 @@ workflows:
       vars:
         # 目标部署版本。改这里的同时要改 ios/Runner.xcodeproj 和
         # ios/Flutter/AppFrameworkInfo.plist，脚本末尾会做一致性检查。
-        EXPECTED_IOS_TARGET: "15.5"
+        EXPECTED_IOS_TARGET: "26.5"
     triggering:
       events:
         - push
@@ -73,16 +76,79 @@ workflows:
       - name: 校验包内没有残留的旧部署目标
         script: |
           set -e
-          if grep -rn "IPHONEOS_DEPLOYMENT_TARGET = 1[0-4]\." ios/Runner.xcodeproj/project.pbxproj; then
-            echo "❌ Xcode 工程里还有低于 15.5 的部署目标"
+          # 只要有一条 IPHONEOS_DEPLOYMENT_TARGET 不是 26.5 就算错：
+          # 26.6/26.6.1 超出 Xcode 26.6（iOS 26.5 SDK）的支持范围，
+          # 15.5 这类旧值则说明有人把兼容性改回去了。
+          if grep -rn "IPHONEOS_DEPLOYMENT_TARGET" ios/Runner.xcodeproj/project.pbxproj \
+              | grep -v "= 26.5;"; then
+            echo "❌ Xcode 工程里有不是 26.5 的部署目标"
             exit 1
           fi
-          echo "✅ Xcode 工程里的部署目标都不低于 15.5"
+          echo "✅ Xcode 工程里的部署目标都是 26.5"
 
     artifacts:
       - build/ios/iphoneos/Runner.app
       - /tmp/xcodebuild_logs/*.log
       - flutter_drive.log
+
+  # ------------------------------------------------------------------
+  # 免费 Apple ID 侧载：只编译、不签名，把 Runner.app 打成未签名 ipa。
+  #
+  # 为什么需要它：没有付费 Apple Developer Program 账号时，既不能用
+  # Codemagic 的自动签名（要 App Store Connect API key），也不能用
+  # TestFlight。唯一的免费办法是在 Windows/macOS 上用 Sideloadly 或
+  # AltStore 登录自己的 Apple ID，把这个未签名 ipa 重签后装到自己的
+  # iPhone 上。注意免费签名 7 天过期，到期要重装。
+  #
+  # 这个工作流不配 triggering，只能在 Codemagic 里手动启动。
+  # ------------------------------------------------------------------
+  ios-unsigned-ipa:
+    name: iOS 未签名 IPA（免费 Apple ID 侧载）
+    instance_type: mac_mini_m2
+    max_build_duration: 45
+    environment:
+      flutter: 3.47.2
+      xcode: 26.6
+      cocoapods: default
+      vars:
+        EXPECTED_IOS_TARGET: "26.5"
+    scripts:
+      - name: 读取依赖
+        script: flutter pub get
+
+      - name: 安装 CocoaPods 依赖
+        script: |
+          find . -name "Podfile" -maxdepth 2 -execdir pod install \;
+
+      - name: 编译 iOS（不签名）
+        script: flutter build ios --release --no-codesign
+
+      - name: 校验产物的最低系统版本
+        script: |
+          set -e
+          APP="build/ios/iphoneos/Runner.app"
+          MIN_OS=$(plutil -extract MinimumOSVersion raw -o - "$APP/Info.plist")
+          echo "编译产物的 MinimumOSVersion = $MIN_OS"
+          test "$MIN_OS" = "$EXPECTED_IOS_TARGET"
+
+      - name: 打包成未签名 ipa
+        script: |
+          set -e
+          APP="build/ios/iphoneos/Runner.app"
+          OUT="build/ios/sideload"
+          rm -rf "$OUT"
+          mkdir -p "$OUT/Payload"
+          # 用 ditto 而不是 cp -R：Flutter.framework 里有符号链接，
+          # ditto 会原样保留，Sideloadly 重签时才不会把框架拷坏。
+          ditto "$APP" "$OUT/Payload/Runner.app"
+          # -y 把符号链接按链接存进去，而不是解引用成普通文件。
+          (cd "$OUT" && zip -qry clean_my_photos-unsigned.ipa Payload)
+          unzip -l "$OUT/clean_my_photos-unsigned.ipa" | grep -q "Payload/Runner.app/Runner"
+          echo "✅ 未签名 ipa 已生成：$OUT/clean_my_photos-unsigned.ipa"
+
+    artifacts:
+      - build/ios/sideload/*.ipa
+      - /tmp/xcodebuild_logs/*.log
 
   # ------------------------------------------------------------------
   # 正式发布：签名后打 ipa 并上传 TestFlight。
@@ -160,7 +226,7 @@ workflows:
           APP="build/ios/archive/Runner.xcarchive/Products/Applications/Runner.app"
           MIN_OS=$(plutil -extract MinimumOSVersion raw -o - "$APP/Info.plist")
           echo "ipa 的 MinimumOSVersion = $MIN_OS"
-          test "$MIN_OS" = "15.5"
+          test "$MIN_OS" = "26.5"
 
     artifacts:
       - build/ios/ipa/*.ipa
